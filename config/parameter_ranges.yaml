@@ -1,0 +1,5 @@
+# Illustrative MVP ranges — replace with literature/experimental ranges.
+parameters:
+  TMP_bar: {minimum: 0.2, maximum: 20, unit: bar, source_type: illustrative_default, source: MVP demo, notes: Replace with validated operating range.}
+  permeability_LMH_bar: {minimum: 1, maximum: 100, unit: LMH/bar, source_type: illustrative_default, source: MVP demo, notes: Replace with measured/literature value.}
+  thickness_um: {minimum: 10, maximum: 500, unit: um, source_type: illustrative_default, source: MVP demo, notes: Replace with measured range.}

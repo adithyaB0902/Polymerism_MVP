@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.db
+data/polymemsim.db
+models_artifacts/*.joblib
+models_artifacts/*.json
+.git/
+.gitignore
+screenshots/
+*.png

@@ -1,0 +1,4 @@
+polymer_name,membrane_type,permeability_LMH_bar,thickness_um,baseline_rejection_percent,source_type,source,notes
+Generic MF,MF,25,100,90,illustrative_default,MVP demo,Not experimental validation
+Generic UF,UF,25,100,95,illustrative_default,MVP demo,Not experimental validation
+Generic NF,NF,25,100,98,illustrative_default,MVP demo,Not experimental validation

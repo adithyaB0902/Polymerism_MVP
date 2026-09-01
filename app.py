@@ -1,0 +1,1081 @@
+"""POLYMEMSIM Streamlit app — a virtual polymer-membrane testing lab.
+
+Tab layout (all tabs render their code every rerun; Streamlit just
+hides/shows the corresponding panel):
+
+  0  Overview
+  1  Sample Registry       - create/browse membrane samples & batches (SQLite-backed)
+  2  Protocol Runner       - guided multi-step experimental protocol (lab/protocol.py)
+  3  Single Simulation     - simple or detailed physics, simulated replicates, log to notebook
+  4  Lab Notebook          - browse/filter every logged experiment
+  5  Validation & Calibration - upload real data, compare, and fit physics parameters to it
+  6  Virtual Experiments   - generate a synthetic screening dataset
+  7  Optimization          - rank candidates by feasibility_score
+  8  Pareto                - flux-vs-rejection Pareto frontier
+  9  Sensitivity           - one-at-a-time parameter sensitivity
+  10 Experiment Recommendation
+  11 ML Lab                - train / cross-validate / predict / explain / registry
+  12 Feasibility           - calibration-aware screening verdict
+  13 Assumptions & Limitations
+
+See models/membrane.py for which inputs each physics model actually
+uses, and docs/assumptions.md / docs/equations.md for the full picture.
+"""
+
+import numpy as np
+import pandas as pd
+import streamlit as st
+
+from ui_theme import inject_theme, hero, stat_strip, sidebar_section, verdict_badge, score_display, check_row
+from models.membrane import Membrane, Water, OperatingConditions, Targets
+from models.simulator import run_simulation, run_detailed_simulation
+from models.feasibility import feasibility_assessment
+from simulation.generate_dataset import generate_virtual_experiments
+from simulation.sensitivity import sensitivity_analysis
+from optimization.optimizer import optimize_candidates, pareto_frontier
+from optimization.experiment_recommender import recommend_experiments
+from validation.experimental_data import validate_experimental_csv
+from validation.comparison import compare_predictions
+from validation.calibration import calibrate_sample
+
+from db import repository as repo
+from lab.samples import (
+    load_presets,
+    create_sample_from_preset,
+    create_sample_from_membrane,
+    sample_to_membrane,
+)
+from lab.replicates import simulate_replicates, replicate_statistics, DEFAULT_NOISE_CV_PERCENT
+from lab.protocol import (
+    start_protocol,
+    current_step_definition,
+    record_current_step,
+    is_complete,
+    progress_fraction,
+    collected_values,
+    PROTOCOL_STEPS,
+)
+
+from ml.train import train_models, FEATURES as ML_FEATURES, TARGETS as ML_TARGETS
+from ml.dataset import assemble_training_dataset
+from ml.model_registry import save_and_register_models, load_active_model, load_all_active_models
+from ml.predict import predict_candidate
+from ml.evaluate import cross_validate_all_targets, compare_model_types
+from ml.uncertainty import supports_uncertainty, predict_one_with_uncertainty
+from ml.explain import feature_importances, permutation_importances, used_vs_unused_features
+from ml.ood import OODDetector
+
+st.set_page_config(page_title="POLYMEMSIM", layout="wide", page_icon="🧪")
+inject_theme()
+hero("🧪", "POLYMEMSIM", "Virtual Polymer Membrane Testing Lab")
+st.caption(
+    "Screening-level research MVP with a persistent lab notebook. Synthetic/ML predictions are not experimental validation."
+)
+
+
+@st.cache_resource
+def get_db_connection():
+    return repo.get_connection()
+
+
+conn = get_db_connection()
+
+# Resolve any pending cross-widget navigation requests queued by a button
+# elsewhere in the app (e.g. "jump the sidebar sample selector to the
+# sample I just created"). This MUST happen before any widget with a
+# matching key is instantiated below -- Streamlit forbids writing to a
+# widget's own session_state key after that widget has already rendered
+# once in the current script run, so any code that wants to redirect an
+# already-rendered widget queues a "_pending_*" key and calls st.rerun();
+# on the resulting fresh run, we resolve it here first, before the widget exists.
+for _pending_key, _real_key in [
+    ("_pending_active_sample_id", "active_sample_id"),
+    ("_pending_active_protocol_run_id", "active_protocol_run_id"),
+]:
+    if _pending_key in st.session_state:
+        st.session_state[_real_key] = st.session_state.pop(_pending_key)
+
+_NOT_USED_SIMPLE = "Not used by the Simple physics model. See the Detailed model and the Assumptions tab."
+
+
+def _help(field, detailed_text):
+    """Return `detailed_text` when Detailed Physics is on, else the
+    standard 'not used by Simple model' note."""
+    return detailed_text if st.session_state.get("detailed_physics") else _NOT_USED_SIMPLE
+
+
+# --------------------------------------------------------------------------
+# Sidebar: physics model choice, membrane source, water/operating conditions
+# --------------------------------------------------------------------------
+
+
+def sidebar_inputs():
+    s = st.sidebar
+    sidebar_section(s, "⚙️", "Physics model")
+    detailed = s.toggle(
+        "Detailed Physics",
+        value=False,
+        key="detailed_physics",
+        help="Adds temperature-corrected viscosity, a structural pore-flow flux "
+        "cross-check, concentration-polarization-corrected rejection, a "
+        "recovery-based mass balance, and a water-quality fouling adjustment. "
+        "Off = the original simple model (permeability x TMP only).",
+    )
+
+    sidebar_section(s, "🧪", "Membrane sample")
+    source = s.radio("Source", ["Registered sample", "Quick manual entry (not saved)"], index=0)
+
+    membrane = None
+    active_sample_id = None
+    if source == "Registered sample":
+        samples = repo.list_samples(conn)
+        if not samples:
+            s.info("No samples yet. Load a preset below, or create one in the Sample Registry tab.")
+            presets = load_presets()
+            labels = [f"{p['polymer_name']} ({p['membrane_type']})" for p in presets]
+            choice = s.selectbox("Quick-load a preset", labels)
+            if s.button("Load preset as new sample"):
+                new_id = create_sample_from_preset(conn, presets[labels.index(choice)])
+                st.session_state["_pending_active_sample_id"] = new_id
+                st.rerun()
+            membrane = Membrane(
+                "No sample yet", "UF", 100.0, 25.0, baseline_rejection_percent=95.0, fouling_coefficient=0.03
+            )
+        else:
+            ids = [row["id"] for row in samples]
+            by_id = {row["id"]: row for row in samples}
+            select_kwargs = {"index": 0} if "active_sample_id" not in st.session_state else {}
+            chosen_id = s.selectbox(
+                "Active sample",
+                ids,
+                format_func=lambda i: f"#{i} {by_id[i]['polymer_name']} ({by_id[i]['membrane_type']}, {by_id[i]['origin']})",
+                key="active_sample_id",
+                **select_kwargs,
+            )
+            active_sample_id = chosen_id
+            row = by_id[chosen_id]
+            membrane = sample_to_membrane(row)
+            with s.expander("Sample details"):
+                st.json({k: v for k, v in row.items() if k not in ("id",)})
+    else:
+        polymer = s.text_input("Polymer", "Custom Polymer")
+        membrane_type = s.selectbox("Membrane type", ["MF", "UF", "NF", "RO", "Custom"], index=1)
+        thickness = s.number_input(
+            "Thickness (µm)",
+            min_value=0.01,
+            value=100.0,
+            help=_help("thickness_um", "Drives the structural pore-flow flux cross-check."),
+        )
+        permeability = s.number_input(
+            "Permeability (LMH/bar)",
+            min_value=0.01,
+            value=25.0,
+            help="Drives flux: J = permeability x TMP (temperature-corrected in Detailed mode).",
+        )
+        pore = s.number_input(
+            "Pore size (nm)",
+            min_value=0.0,
+            value=20.0,
+            help=_help("pore_size_nm", "Drives the structural pore-flow flux cross-check."),
+        )
+        mwco = s.number_input("MWCO (Da)", min_value=0.0, value=10000.0, help=_NOT_USED_SIMPLE)
+        porosity = s.number_input(
+            "Porosity",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.35,
+            help=_help("porosity", "Drives the structural pore-flow flux cross-check."),
+        )
+        charge = s.number_input(
+            "Surface charge",
+            value=0.0,
+            help=_help("surface_charge", "Contributes to the illustrative fouling-propensity adjustment."),
+        )
+        hydro = s.number_input(
+            "Hydrophilicity",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.7,
+            help=_help("hydrophilicity", "Contributes to the illustrative fouling-propensity adjustment."),
+        )
+        rejection = s.number_input(
+            "Baseline (intrinsic) rejection (%)",
+            min_value=0.0,
+            max_value=100.0,
+            value=95.0,
+            help="Used directly (Simple), or corrected for concentration polarization (Detailed).",
+        )
+        fouling = s.number_input(
+            "Fouling coefficient (1/hr)",
+            min_value=0.0,
+            value=0.03,
+            help="Drives flux decline over time (adjusted by water quality in Detailed mode).",
+        )
+        membrane = Membrane(
+            polymer,
+            membrane_type,
+            thickness,
+            permeability,
+            pore,
+            mwco,
+            porosity,
+            charge,
+            hydro,
+            10000.0,
+            rejection,
+            fouling,
+        )
+
+    sidebar_section(s, "💧", "Water")
+    contaminant = s.text_input("Contaminant", "Custom contaminant")
+    cf = s.number_input(
+        "Feed concentration (mg/L)", min_value=0.0, value=100.0, help="Drives permeate concentration."
+    )
+    turbidity = s.number_input(
+        "Turbidity (NTU)",
+        min_value=0.0,
+        value=5.0,
+        help=_help("turbidity_NTU", "Contributes to the illustrative fouling-propensity adjustment."),
+    )
+    tds = s.number_input(
+        "TDS (mg/L)",
+        min_value=0.0,
+        value=500.0,
+        help=_help("water_TDS_mg_L", "Contributes to the illustrative fouling-propensity adjustment."),
+    )
+    ph = s.number_input(
+        "pH",
+        min_value=0.0,
+        max_value=14.0,
+        value=7.0,
+        help="Validated to be within 0-14; not otherwise used in either model.",
+    )
+    temp = s.number_input(
+        "Temperature (°C)",
+        min_value=0.0,
+        max_value=100.0,
+        value=25.0,
+        help=_help("water_temperature_C", "Drives temperature-corrected viscosity/flux (Vogel equation)."),
+    )
+    viscosity = s.number_input(
+        "Viscosity (Pa·s)",
+        min_value=0.00001,
+        value=0.001,
+        help="Not used by either model — Detailed mode computes viscosity "
+        "from temperature automatically instead of using this value.",
+    )
+    density = s.number_input("Density (kg/m³)", min_value=1.0, value=1000.0, help=_NOT_USED_SIMPLE)
+
+    sidebar_section(s, "🎛️", "Operating")
+    tmp = s.number_input("TMP (bar)", min_value=0.0, value=2.0, help="Drives flux and energy.")
+    flow = s.number_input(
+        "Feed flow (L/min)",
+        min_value=0.0,
+        value=10.0,
+        help="Validated to be non-negative; cancels out of the energy-per-m3 "
+        "result in both models (see Assumptions tab).",
+    )
+    crossflow = s.number_input(
+        "Cross-flow velocity (m/s)",
+        min_value=0.0,
+        value=0.2,
+        help=_help(
+            "op_crossflow_velocity_m_s", "Drives the concentration-polarization correction to rejection."
+        ),
+    )
+    recovery = s.number_input(
+        "Recovery (%)",
+        min_value=0.0,
+        max_value=100.0,
+        value=20.0,
+        help=_help("op_recovery_percent", "Drives concentrate concentration and permeate-normalized energy."),
+    )
+    time_hr = s.number_input(
+        "Operating time (hr)", min_value=0.0, value=4.0, help="Drives flux decline over time."
+    )
+    area = s.number_input(
+        "Membrane area (m²)",
+        min_value=0.0001,
+        value=1.0,
+        help=_help(
+            "op_membrane_area_m2",
+            "Drives total permeate flow (L/hr); never affects any per-m2/per-m3 intensive result.",
+        ),
+    )
+    eta = s.number_input(
+        "Pump efficiency", min_value=0.01, max_value=1.0, value=0.70, help="Drives energy per m3."
+    )
+    elec = s.number_input(
+        "Electricity price", min_value=0.0, value=8.0, help="Drives cost per m3 (electricity term only)."
+    )
+
+    sidebar_section(s, "🎯", "Targets")
+    min_rej = s.number_input("Minimum rejection (%)", 0.0, 100.0, 95.0)
+    min_flux = s.number_input("Minimum flux (LMH)", 0.0, 100000.0, 30.0)
+    max_foul = s.number_input("Maximum flux decline (%)", 0.0, 100.0, 20.0)
+    max_energy = s.number_input("Maximum energy (kWh/m³)", 0.0, 100000.0, 2.0)
+    max_cost = s.number_input("Maximum cost / m³", 0.0, 100000.0, 10.0)
+
+    water = Water(contaminant, cf, turbidity, tds, ph, temp, viscosity, density)
+    op = OperatingConditions(tmp, flow, crossflow, recovery, time_hr, temp, area, eta, elec)
+    targets = Targets(min_rej, min_flux, max_foul, max_energy, max_cost)
+    return membrane, water, op, targets, detailed, active_sample_id
+
+
+membrane, water, op, targets, detailed, active_sample_id = sidebar_inputs()
+
+
+def run_current_model(m, w, o, t):
+    return run_detailed_simulation(m, w, o, t) if detailed else run_simulation(m, w, o, t)
+
+
+def ensure_sample_id(m):
+    """Return the active registered sample id, or create one on the fly
+    from the current quick-manual membrane (for logging purposes)."""
+    if active_sample_id is not None:
+        return active_sample_id
+    return create_sample_from_membrane(
+        conn, m, origin="manual", notes="Auto-created from quick manual entry."
+    )
+
+
+tabs = st.tabs(
+    [
+        "🏠 Overview",
+        "🧪 Lab Workflow",
+        "📈 Screening & Optimization",
+        "🧠 ML Lab",
+        "✅ Feasibility",
+        "📖 Reference",
+    ]
+)
+
+# --------------------------------------------------------------------------
+# 0. Overview
+# --------------------------------------------------------------------------
+with tabs[0]:
+    st.subheader("Purpose")
+    st.write(
+        "POLYMEMSIM is a virtual lab for screening whether a proposed polymer membrane is "
+        "promising enough to justify physical testing — combining a documented physics model, "
+        "a persistent lab notebook (samples, batches, protocol runs, logged experiments), "
+        "calibration against real data, and an ML pipeline trained on both."
+    )
+    st.info(
+        "This does not prove membrane performance, safety, regulatory compliance or commercial "
+        "viability. See the Assumptions & Limitations tab."
+    )
+    st.markdown("""
+    **Suggested workflow:**
+    1. **Sample Registry** — register a membrane sample (or load a preset).
+    2. **Protocol Runner** — walk through the guided measurement protocol.
+    3. **Single Simulation** — run the physics model (simple or detailed), simulate replicates, log results.
+    4. **Lab Notebook** — review everything logged so far.
+    5. **Validation & Calibration** — upload real measurements; compare, then fit physics parameters to them.
+    6. **Virtual Experiments → Optimization → Pareto → Sensitivity → Experiment Recommendation** — screen many candidates and decide what to test next.
+    7. **ML Lab** — train/evaluate/predict/explain models on synthetic + real data.
+    8. **Feasibility** — a calibration-aware go/no-go screening verdict.
+    """)
+    counts = {
+        "Samples": len(repo.list_samples(conn)),
+        "Logged experiments": len(repo.list_experiments(conn)),
+        "Protocol runs": len(repo.list_protocol_runs(conn)),
+        "Calibration runs": len(repo.list_calibration_runs(conn)),
+        "Registered ML models": len(repo.list_models(conn)),
+    }
+    stat_strip(counts)
+
+# --------------------------------------------------------------------------
+# 1. Lab Workflow (Sample Registry, Protocol Runner, Single Simulation,
+#    Lab Notebook, Validation & Calibration)
+# --------------------------------------------------------------------------
+with tabs[1]:
+    page = st.radio(
+        "Section",
+        [
+            'Sample Registry',
+            'Protocol Runner',
+            'Single Simulation',
+            'Lab Notebook',
+            'Validation & Calibration',
+        ],
+        horizontal=True,
+        key="lab_workflow_page",
+        label_visibility="collapsed",
+    )
+    st.divider()
+    if page == 'Sample Registry':
+        st.subheader("Samples & Batches")
+
+        with st.expander("Create a batch"):
+            batch_name = st.text_input("Batch name", key="new_batch_name")
+            batch_notes = st.text_area("Notes", key="new_batch_notes")
+            if st.button("CREATE BATCH") and batch_name:
+                repo.create_batch(conn, batch_name, batch_notes)
+                st.success(f"Batch '{batch_name}' created.")
+                st.rerun()
+
+        batches = repo.list_batches(conn)
+        batch_options = {"(none)": None, **{f"#{b['id']} {b['name']}": b["id"] for b in batches}}
+
+        with st.expander("Load an illustrative preset"):
+            presets = load_presets()
+            for p in presets:
+                c1, c2 = st.columns([3, 1])
+                c1.write(
+                    f"**{p['polymer_name']}** ({p['membrane_type']}) — "
+                    f"{p['permeability_LMH_bar']} LMH/bar, {p['thickness_um']} µm, "
+                    f"{p['baseline_rejection_percent']}% rejection. _{p['notes']}_"
+                )
+                if c2.button("Load", key=f"preset_{p['polymer_name']}"):
+                    new_id = create_sample_from_preset(conn, p)
+                    st.session_state["_pending_active_sample_id"] = new_id
+                    st.success(f"Loaded as sample #{new_id}.")
+                    st.rerun()
+
+        with st.expander("Create a sample manually"):
+            c1, c2, c3 = st.columns(3)
+            polymer_name = c1.text_input("Polymer name", "New Polymer")
+            membrane_type = c2.selectbox("Type", ["MF", "UF", "NF", "RO", "Custom"], key="reg_type")
+            chosen_batch = c3.selectbox("Batch", list(batch_options.keys()))
+            c4, c5, c6 = st.columns(3)
+            thickness_um = c4.number_input("Thickness (µm)", min_value=0.01, value=100.0, key="reg_thick")
+            permeability_LMH_bar = c5.number_input(
+                "Permeability (LMH/bar)", min_value=0.01, value=25.0, key="reg_perm"
+            )
+            baseline_rejection_percent = c6.number_input("Rejection (%)", 0.0, 100.0, 95.0, key="reg_rej")
+            c7, c8 = st.columns(2)
+            fouling_coefficient = c7.number_input(
+                "Fouling coefficient (1/hr)", min_value=0.0, value=0.03, key="reg_foul"
+            )
+            notes = c8.text_input("Notes", "", key="reg_notes")
+            if st.button("CREATE SAMPLE"):
+                new_membrane = Membrane(
+                    polymer_name,
+                    membrane_type,
+                    thickness_um,
+                    permeability_LMH_bar,
+                    baseline_rejection_percent=baseline_rejection_percent,
+                    fouling_coefficient=fouling_coefficient,
+                )
+                new_id = create_sample_from_membrane(
+                    conn, new_membrane, batch_id=batch_options[chosen_batch], notes=notes, origin="manual"
+                )
+                st.session_state["_pending_active_sample_id"] = new_id
+                st.success(f"Created sample #{new_id}.")
+                st.rerun()
+
+        st.markdown("**All samples**")
+        samples = repo.list_samples(conn)
+        if samples:
+            st.dataframe(pd.DataFrame(samples), width="stretch")
+        else:
+            st.info("No samples yet.")
+    elif page == 'Protocol Runner':
+        st.subheader("Guided Experimental Protocol")
+        st.caption("Turns docs/experimental_protocol.md into an actual step-by-step, saved workflow.")
+        samples = repo.list_samples(conn)
+        if not samples:
+            st.info("Create or load a sample in the Sample Registry tab first.")
+        else:
+            labels = [f"#{r['id']} {r['polymer_name']} ({r['membrane_type']})" for r in samples]
+            chosen = st.selectbox("Sample", labels, key="protocol_sample")
+            sample_id = samples[labels.index(chosen)]["id"]
+
+            existing_runs = repo.list_protocol_runs(conn, sample_id=sample_id)
+            run_by_id = {r["id"]: r for r in existing_runs}
+            run_options = [None] + list(run_by_id.keys())
+
+            def _format_run(rid):
+                if rid is None:
+                    return "(start a new run)"
+                r = run_by_id[rid]
+                return (
+                    f"#{r['id']} {r['name']} — {r['status']} (step {r['current_step']}/{len(PROTOCOL_STEPS)})"
+                )
+
+            # If the previously-selected run id isn't valid for the currently
+            # chosen sample (e.g. the user just switched samples), clear it
+            # before the widget renders rather than letting Streamlit choke on
+            # a stored value that isn't among this run's options.
+            if (
+                st.session_state.get("active_protocol_run_id", None) not in run_options
+                and "active_protocol_run_id" in st.session_state
+            ):
+                del st.session_state["active_protocol_run_id"]
+            run_select_kwargs = {"index": 0} if "active_protocol_run_id" not in st.session_state else {}
+            chosen_run_id = st.selectbox(
+                "Protocol run",
+                run_options,
+                format_func=_format_run,
+                key="active_protocol_run_id",
+                **run_select_kwargs,
+            )
+
+            if chosen_run_id is None:
+                run_name = st.text_input("Run name", "Protocol run")
+                if st.button("START PROTOCOL"):
+                    new_run_id = start_protocol(conn, sample_id, run_name)
+                    st.session_state["_pending_active_protocol_run_id"] = new_run_id
+                    st.rerun()
+            else:
+                run = run_by_id[chosen_run_id]
+                st.progress(progress_fraction(run))
+                if is_complete(run):
+                    st.success("This protocol run is complete.")
+                    st.json(collected_values(run))
+                    if st.button("LOG AS EXPERIMENT"):
+                        vals = collected_values(run)
+                        try:
+                            result = {
+                                "flux_LMH": float(vals.get("flux_LMH", 0) or 0),
+                                "rejection_percent": float(vals.get("rejection_percent", 0) or 0),
+                            }
+                            repo.record_experiment(
+                                conn,
+                                sample_id,
+                                {},
+                                {},
+                                result,
+                                data_source="measured",
+                                protocol_run_id=run["id"],
+                                notes=f"From protocol run #{run['id']} ({run['name']})",
+                            )
+                            st.success("Logged to the lab notebook as a measured experiment.")
+                        except (ValueError, TypeError):
+                            st.error(
+                                "Couldn't parse flux_LMH/rejection_percent as numbers from the recorded values."
+                            )
+                else:
+                    step_def = current_step_definition(run)
+                    st.markdown(
+                        f"**Step {run['current_step'] + 1}/{len(PROTOCOL_STEPS)}: {step_def['name']}**"
+                    )
+                    st.write(step_def["description"])
+                    values = {}
+                    for field in step_def["fields"]:
+                        values[field] = st.text_input(
+                            field.replace("_", " ").title(), key=f"step_{run['id']}_{field}"
+                        )
+                    if st.button("RECORD & CONTINUE"):
+                        record_current_step(conn, run["id"], values)
+                        st.rerun()
+    elif page == 'Single Simulation':
+        st.subheader("Single Simulation")
+        st.caption(f"Model: {'Detailed' if detailed else 'Simple'} (toggle in the sidebar).")
+        if st.button("RUN SIMULATION"):
+            try:
+                result = run_current_model(membrane, water, op, targets)
+                st.session_state["last_result"] = result
+            except Exception as e:
+                st.error(str(e))
+
+        if "last_result" in st.session_state:
+            result = st.session_state["last_result"]
+            c = st.columns(5)
+            for col, (k, v) in zip(
+                c,
+                [
+                    ("Flux", result["flux_LMH"]),
+                    ("Rejection", result["rejection_percent"]),
+                    ("Permeate", result["permeate_mg_L"]),
+                    ("Energy", result["energy_kWh_m3"]),
+                    ("Score", result["feasibility_score"]),
+                ],
+            ):
+                col.metric(k, f"{v:.2f}")
+            st.dataframe(pd.DataFrame([result]), width="stretch")
+            st.caption(f"Flux model: {result['flux_model']}. {result['scientific_note']}")
+
+            st.markdown("**Simulated replicates**")
+            st.caption(
+                "Injects illustrative measurement-style noise on top of the deterministic result "
+                "(see lab/replicates.py) — this is NOT a model of any real error source."
+            )
+            n_reps = st.slider("Number of replicates", 2, 20, 3)
+            if st.button("SIMULATE REPLICATES"):
+                reps = simulate_replicates(result, n=n_reps)
+                stats = replicate_statistics(reps, fields=list(DEFAULT_NOISE_CV_PERCENT.keys()))
+                st.session_state["last_replicates"] = reps
+                st.session_state["last_replicate_stats"] = stats
+            if "last_replicate_stats" in st.session_state:
+                st.dataframe(pd.DataFrame(st.session_state["last_replicate_stats"]).T, width="stretch")
+                st.dataframe(pd.DataFrame(st.session_state["last_replicates"]), width="stretch")
+
+            st.markdown("**Log this result**")
+            if st.button("SAVE TO LAB NOTEBOOK"):
+                sid = ensure_sample_id(membrane)
+                repo.record_experiment(
+                    conn,
+                    sid,
+                    water.__dict__,
+                    op.__dict__,
+                    result,
+                    physics_model=result["physics_model"],
+                    data_source="simulated",
+                )
+                st.success(f"Logged against sample #{sid}.")
+    elif page == 'Lab Notebook':
+        st.subheader("Lab Notebook")
+        samples = repo.list_samples(conn)
+        sample_filter_labels = ["(all samples)"] + [f"#{r['id']} {r['polymer_name']}" for r in samples]
+        chosen_filter = st.selectbox("Filter by sample", sample_filter_labels)
+        source_filter = st.selectbox("Filter by data source", ["(all)", "simulated", "measured"])
+
+        sample_id_filter = (
+            None
+            if chosen_filter == "(all samples)"
+            else samples[sample_filter_labels.index(chosen_filter) - 1]["id"]
+        )
+        ds_filter = None if source_filter == "(all)" else source_filter
+        experiments = repo.list_experiments(conn, sample_id=sample_id_filter, data_source=ds_filter)
+
+        st.metric("Logged experiments matching filters", len(experiments))
+        if experiments:
+            df_exp = pd.DataFrame(experiments)
+            st.dataframe(df_exp, width="stretch")
+            st.download_button("Download CSV", df_exp.to_csv(index=False), "lab_notebook.csv", "text/csv")
+        else:
+            st.info("No experiments logged yet — run a simulation or complete a protocol and save it.")
+    elif page == 'Validation & Calibration':
+        st.subheader("Validation & Calibration")
+        uploaded = st.file_uploader(
+            "Upload experimental CSV (needs flux_LMH and rejection_percent columns; "
+            "optional operating_time_hr)",
+            type=["csv"],
+        )
+        if uploaded:
+            df_up, report = validate_experimental_csv(uploaded)
+            st.write(report)
+            st.dataframe(df_up.head(100), width="stretch")
+
+            if report["valid_rows"] >= 1:
+                st.markdown("**Compare current physics prediction to these measurements**")
+                try:
+                    predicted = run_current_model(membrane, water, op, targets)
+                    comp_flux = compare_predictions(
+                        [predicted["flux_LMH"]] * report["valid_rows"], df_up["flux_LMH"].dropna().tolist()
+                    )
+                    st.write("Flux comparison (current sidebar prediction vs each measured row):", comp_flux)
+                except Exception as e:
+                    st.error(str(e))
+
+            if report["valid_rows"] >= 2:
+                st.markdown("**Calibrate physics parameters to this data**")
+                st.caption(
+                    "Fits permeability, fouling coefficient and baseline rejection to best match "
+                    "the uploaded measurements (nonlinear least squares) — see validation/calibration.py."
+                )
+                if st.button("CALIBRATE"):
+                    measurements = (
+                        df_up[["flux_LMH", "rejection_percent"]].dropna(how="all").to_dict("records")
+                    )
+                    if "operating_time_hr" in df_up.columns:
+                        for i, row in enumerate(df_up.to_dict("records")):
+                            if i < len(measurements) and "operating_time_hr" in row:
+                                measurements[i]["operating_time_hr"] = row["operating_time_hr"]
+                    try:
+                        calib = calibrate_sample(membrane, water, op, measurements)
+                        st.session_state["last_calibration"] = calib
+                        st.success(f"Fitted params: {calib['fitted_params']}")
+                        c1, c2 = st.columns(2)
+                        c1.write("Before")
+                        c1.json(calib["metrics_before"])
+                        c2.write("After")
+                        c2.json(calib["metrics_after"])
+                    except ValueError as e:
+                        st.error(str(e))
+
+                if "last_calibration" in st.session_state:
+                    calib = st.session_state["last_calibration"]
+                    if st.button("SAVE CALIBRATED SAMPLE"):
+                        sid = ensure_sample_id(membrane)
+                        new_id = create_sample_from_membrane(
+                            conn,
+                            calib["calibrated_membrane"],
+                            origin="calibrated",
+                            calibrated_from_sample_id=sid,
+                            notes=f"Calibrated from sample #{sid} against {calib['n_measurements']} measurements.",
+                        )
+                        repo.save_calibration_run(
+                            conn,
+                            sid,
+                            new_id,
+                            "least_squares",
+                            calib["n_measurements"],
+                            calib["fitted_params"],
+                            calib["metrics_before"],
+                            calib["metrics_after"],
+                        )
+                        st.success(f"Saved as new sample #{new_id}, linked to a calibration run.")
+
+        st.markdown("**Calibration history**")
+        calib_runs = repo.list_calibration_runs(conn)
+        if calib_runs:
+            st.dataframe(
+                pd.DataFrame([{k: v for k, v in r.items() if not k.endswith("_json")} for r in calib_runs]),
+                width="stretch",
+            )
+        else:
+            st.info("No calibration runs yet.")
+
+# --------------------------------------------------------------------------
+# 2. Screening & Optimization (Virtual Experiments, Optimization, Pareto,
+#    Sensitivity, Recommend Next)
+# --------------------------------------------------------------------------
+with tabs[2]:
+    page = st.radio(
+        "Section",
+        ['Virtual Experiments', 'Optimization', 'Pareto Frontier', 'Sensitivity', 'Recommend Next'],
+        horizontal=True,
+        key="screening_page",
+        label_visibility="collapsed",
+    )
+    st.divider()
+    if page == 'Virtual Experiments':
+        st.subheader("Virtual Experiments")
+        st.caption(
+            "Uses the Simple physics model regardless of the sidebar toggle, for consistency with "
+            "the Optimization/Pareto/Sensitivity/ML tabs below."
+        )
+        n = st.slider("Number of virtual experiments", 100, 10000, 500, step=100)
+        if st.button("GENERATE VIRTUAL EXPERIMENTS"):
+            df = generate_virtual_experiments(n, seed=42)
+            st.session_state["virtual_df"] = df
+            df.to_csv("data/synthetic_experiments.csv", index=False)
+            st.success(f"Generated {len(df)} synthetic physics experiments.")
+        if "virtual_df" in st.session_state:
+            st.dataframe(st.session_state["virtual_df"].head(100), width="stretch")
+            st.download_button(
+                "Download CSV",
+                st.session_state["virtual_df"].to_csv(index=False),
+                "synthetic_experiments.csv",
+                "text/csv",
+            )
+    elif page == 'Optimization':
+        st.subheader("Optimization")
+        if st.button("OPTIMIZE"):
+            df = generate_virtual_experiments(2000, seed=42)
+            best = optimize_candidates(df, 10)
+            st.dataframe(best, width="stretch")
+    elif page == 'Pareto Frontier':
+        st.subheader("Pareto Frontier")
+        if st.button("CALCULATE PARETO FRONTIER"):
+            df = generate_virtual_experiments(1000, seed=42)
+            p = pareto_frontier(df)
+            st.plotly_chart(
+                __import__("plotly.express").express.scatter(
+                    p,
+                    x="flux_LMH",
+                    y="rejection_percent",
+                    hover_data=["feasibility_score"],
+                    title="Pareto-optimal Flux vs Rejection",
+                ),
+                width="stretch",
+            )
+            st.dataframe(p.head(50), width="stretch")
+    elif page == 'Sensitivity':
+        st.subheader("Sensitivity Analysis")
+        st.caption(
+            "One-at-a-time sweep (±50%) of each parameter; larger `feasibility_range` means the "
+            "score is more sensitive to that input."
+        )
+        if st.button("RUN SENSITIVITY"):
+            try:
+                sres = sensitivity_analysis(membrane, water, op, targets)
+                st.dataframe(sres, width="stretch")
+                st.bar_chart(sres.set_index("parameter")["feasibility_range"])
+            except Exception as e:
+                st.error(str(e))
+    elif page == 'Recommend Next':
+        st.subheader("What should we test next?")
+        if "virtual_df" in st.session_state:
+            if st.button("RECOMMEND EXPERIMENTS"):
+                rec = recommend_experiments(st.session_state["virtual_df"], top_n=5)
+                st.dataframe(rec, width="stretch")
+        else:
+            st.info("Generate virtual experiments first.")
+
+# --------------------------------------------------------------------------
+# 3. ML Lab
+# --------------------------------------------------------------------------
+with tabs[3]:
+    st.subheader("ML Lab")
+
+    with st.expander("1. Train models", expanded=True):
+        n_synth = st.slider("Synthetic rows", 100, 5000, 500, key="ml_n_synth")
+        include_exp = st.checkbox("Include measured experiments from the lab notebook", value=True)
+        use_engineered = st.checkbox("Use physics-informed engineered features (recommended — substantially lowers error)", value=True)
+        if st.button("TRAIN ML MODELS"):
+            df_train, summary = assemble_training_dataset(
+                conn, n_synthetic=n_synth, seed=42, include_experimental=include_exp
+            )
+            models, metrics, feature_list = train_models(df_train, use_engineered_features=use_engineered)
+            st.session_state["ml_models"] = models
+            st.session_state["ml_metrics"] = metrics
+            st.session_state["ml_feature_list"] = feature_list
+            st.session_state["ml_training_df"] = df_train
+            st.success(
+                f"Trained on {summary['total_rows']} rows "
+                f"({summary['synthetic_rows']} synthetic + {summary['experimental_rows']} measured)."
+            )
+        if "ml_metrics" in st.session_state:
+            st.dataframe(pd.DataFrame(st.session_state["ml_metrics"]), width="stretch")
+            if st.button("REGISTER MODELS"):
+                save_and_register_models(
+                    conn,
+                    st.session_state["ml_models"],
+                    st.session_state["ml_metrics"],
+                    st.session_state["ml_feature_list"],
+                    len(st.session_state["ml_training_df"]),
+                    "combined" if include_exp else "synthetic",
+                )
+                st.success("Registered — these models are now the active ones for prediction.")
+
+    with st.expander("2. Cross-validate"):
+        if "ml_training_df" in st.session_state and st.button("RUN 5-FOLD CROSS-VALIDATION"):
+            results, skipped = cross_validate_all_targets(st.session_state["ml_training_df"], n_splits=5)
+            st.dataframe(pd.DataFrame(results), width="stretch")
+            if skipped:
+                st.warning(f"Skipped (too few labeled rows): {[s['target'] for s in skipped]}")
+        elif "ml_training_df" not in st.session_state:
+            st.info("Train models first (section 1) to get a dataset to cross-validate on.")
+
+    with st.expander("3. Compare model types"):
+        if "ml_training_df" in st.session_state:
+            target_choice = st.selectbox("Target", ML_TARGETS, key="compare_target")
+            if st.button("COMPARE MODEL TYPES"):
+                comparison = compare_model_types(
+                    st.session_state["ml_training_df"], target_choice, n_splits=5
+                )
+                st.dataframe(pd.DataFrame(comparison), width="stretch")
+        else:
+            st.info("Train models first (section 1).")
+
+    with st.expander("4. Predict the current sidebar candidate"):
+        active_models = load_all_active_models(conn)
+        if not active_models:
+            st.info("No models registered yet — train and register them in section 1.")
+        else:
+            candidate = {
+                **{
+                    f: getattr(membrane, f)
+                    for f in [
+                        "thickness_um",
+                        "permeability_LMH_bar",
+                        "pore_size_nm",
+                        "MWCO",
+                        "porosity",
+                        "surface_charge",
+                        "hydrophilicity",
+                        "baseline_rejection_percent",
+                    ]
+                },
+                **{
+                    f"water_{f}": v
+                    for f, v in {
+                        "feed_concentration_mg_L": water.feed_concentration_mg_L,
+                        "turbidity_NTU": water.turbidity_NTU,
+                        "TDS_mg_L": water.TDS_mg_L,
+                        "pH": water.pH,
+                        "temperature_C": water.temperature_C,
+                    }.items()
+                },
+                **{
+                    f"op_{f}": v
+                    for f, v in {
+                        "TMP_bar": op.TMP_bar,
+                        "feed_flow_L_min": op.feed_flow_L_min,
+                        "crossflow_velocity_m_s": op.crossflow_velocity_m_s,
+                        "recovery_percent": op.recovery_percent,
+                        "operating_time_hr": op.operating_time_hr,
+                    }.items()
+                },
+            }
+            if st.button("PREDICT WITH ML"):
+                ref_df = (
+                    st.session_state["ml_training_df"]
+                    if "ml_training_df" in st.session_state
+                    else st.session_state.get("virtual_df")
+                )
+                result = predict_candidate(conn, candidate, reference_df=ref_df)
+                if result["predictions"]:
+                    pred_cols = st.columns(len(result["predictions"]))
+                    for pc, (target, value) in zip(pred_cols, result["predictions"].items()):
+                        pc.metric(target.replace("_", " ").title(), f"{value:.2f}")
+                else:
+                    st.info("No predictions available for this candidate.")
+                if result["skipped"]:
+                    st.warning(f"Skipped targets: {result['skipped']}")
+                if result["ood"] and result["ood"]["ood"]:
+                    flagged = [f for f, v in result["ood"]["features"].items() if v]
+                    st.warning(f"Out of the training data's range for: {flagged}")
+                elif result["ood"]:
+                    st.info("Candidate is within the training data's per-feature range.")
+
+    with st.expander("5. Uncertainty (Random Forest / Extra Trees only)"):
+        target_choice_u = st.selectbox("Target", ML_TARGETS, key="uncertainty_target")
+        model_u, meta_u = load_active_model(conn, target_choice_u)
+        if model_u is None:
+            st.info("No registered model for this target yet.")
+        elif not supports_uncertainty(model_u):
+            st.warning(
+                f"The active model for {target_choice_u} is a {meta_u['model_type']}, which "
+                "doesn't support ensemble-spread uncertainty (see ml/uncertainty.py)."
+            )
+        else:
+            candidate_u = {
+                **{
+                    f: getattr(membrane, f)
+                    for f in [
+                        "thickness_um",
+                        "permeability_LMH_bar",
+                        "pore_size_nm",
+                        "MWCO",
+                        "porosity",
+                        "surface_charge",
+                        "hydrophilicity",
+                        "baseline_rejection_percent",
+                    ]
+                },
+                **{
+                    f"water_{f}": v
+                    for f, v in {
+                        "feed_concentration_mg_L": water.feed_concentration_mg_L,
+                        "turbidity_NTU": water.turbidity_NTU,
+                        "TDS_mg_L": water.TDS_mg_L,
+                        "pH": water.pH,
+                        "temperature_C": water.temperature_C,
+                    }.items()
+                },
+                **{
+                    f"op_{f}": v
+                    for f, v in {
+                        "TMP_bar": op.TMP_bar,
+                        "feed_flow_L_min": op.feed_flow_L_min,
+                        "crossflow_velocity_m_s": op.crossflow_velocity_m_s,
+                        "recovery_percent": op.recovery_percent,
+                        "operating_time_hr": op.operating_time_hr,
+                    }.items()
+                },
+            }
+            missing = [f for f in meta_u["feature_list"] if f not in candidate_u]
+            if missing:
+                ref_df_u = (
+                    st.session_state["ml_training_df"]
+                    if "ml_training_df" in st.session_state
+                    else st.session_state.get("virtual_df")
+                )
+                if ref_df_u is not None:
+                    for f in missing:
+                        candidate_u[f] = ref_df_u[f].median() if f in ref_df_u.columns else 0.0
+                else:
+                    for f in missing:
+                        candidate_u[f] = 0.0
+            mean, std = predict_one_with_uncertainty(model_u, candidate_u, meta_u["feature_list"])
+            st.metric(f"Predicted {target_choice_u}", f"{mean:.2f} ± {std:.2f}")
+            st.caption(
+                "± is the standard deviation across the ensemble's individual trees, not a "
+                "formal confidence interval — see ml/uncertainty.py."
+            )
+
+    with st.expander("6. Explainability"):
+        target_choice_e = st.selectbox("Target", ML_TARGETS, key="explain_target")
+        model_e, meta_e = load_active_model(conn, target_choice_e)
+        if model_e is None:
+            st.info("No registered model for this target yet.")
+        else:
+            split = used_vs_unused_features(model_e, meta_e["feature_list"])
+            ranked_df = pd.DataFrame(split["ranked"])
+            st.bar_chart(ranked_df.set_index("feature")["importance"])
+            st.write("Features the model relies on:", split["used"])
+            st.write("Features with near-zero importance:", split["unused"])
+
+    with st.expander("7. Model registry"):
+        registered = repo.list_models(conn, active_only=False)
+        if registered:
+            st.dataframe(
+                pd.DataFrame([{k: v for k, v in r.items() if not k.endswith("_json")} for r in registered]),
+                width="stretch",
+            )
+        else:
+            st.info("No models registered yet.")
+
+# --------------------------------------------------------------------------
+# 4. Feasibility
+# --------------------------------------------------------------------------
+with tabs[4]:
+    st.subheader("Membrane Feasibility Assessment")
+    result = run_current_model(membrane, water, op, targets)
+    calibration_summary = None
+    if active_sample_id is not None and repo.sample_has_calibration(conn, active_sample_id):
+        runs = repo.list_calibration_runs(conn, sample_id=None)
+        matching = [
+            r for r in repo.list_calibration_runs(conn) if r["calibrated_sample_id"] == active_sample_id
+        ]
+        if matching:
+            calibration_summary = {"post_fit_r2": matching[0]["metrics_after"].get("R2")}
+    assessment = feasibility_assessment(result, targets, calibration=calibration_summary)
+    score_col, verdict_col = st.columns([1, 2])
+    with score_col:
+        score_display(result["feasibility_score"])
+    with verdict_col:
+        st.markdown("<br>", unsafe_allow_html=True)
+        rec = assessment["recommendation"]
+        tone = (
+            "strong"
+            if "STRONG" in rec
+            else "promising" if "PROMISING" in rec else "low" if "LOW PRIORITY" in rec else "neutral"
+        )
+        verdict_badge(rec, tone)
+        st.write(assessment["reason"])
+    st.markdown("**Target checks**")
+    for name, passed in assessment["target_checks"].items():
+        check_row(name.replace("_", " ").title(), passed)
+    reliability = assessment["reliability"]
+    if reliability == "LOW":
+        st.warning(
+            "Prediction reliability: LOW — no calibration on record for this sample "
+            "(see Validation & Calibration tab)."
+        )
+    elif reliability == "MEDIUM":
+        st.info(
+            "Prediction reliability: MEDIUM — this sample has a calibration on record with a moderate fit."
+        )
+    else:
+        st.success(
+            "Prediction reliability: HIGH — this sample has a calibration on record with a strong fit."
+        )
+
+# --------------------------------------------------------------------------
+# 5. Reference (Assumptions & Limitations)
+# --------------------------------------------------------------------------
+with tabs[5]:
+    st.subheader("Assumptions & Limitations")
+    st.markdown("""
+    - Screening-level model; not a replacement for laboratory testing.
+    - **Simple** physics model: flux = permeability x TMP; only permeability, TMP, rejection, fouling
+      coefficient, feed concentration, operating time, pump efficiency and electricity price drive results.
+    - **Detailed** physics model additionally uses: temperature (via a Vogel-equation viscosity
+      correction), thickness/porosity/pore size (a Hagen-Poiseuille structural flux cross-check),
+      cross-flow velocity (film-theory concentration polarization), recovery (a mass balance for
+      concentrate concentration and permeate-normalized energy), and turbidity/TDS/hydrophilicity/surface
+      charge (an explicitly-illustrative fouling-propensity heuristic — see models/fouling_index.py).
+    - Rejection is simplified: it is a required, directly-specified (intrinsic) input, not predicted from
+      membrane structure — the Detailed model corrects it for concentration polarization but does not
+      predict it from scratch.
+    - Cost currently reflects electricity only; membrane replacement, cleaning and maintenance cost
+      inputs exist in `models.economics` but are not exposed in this UI.
+    - Simulated replicate measurements (Single Simulation tab) use illustrative injected noise, not any
+      real error source — see `lab/replicates.py`.
+    - The lab notebook, samples, protocol runs, calibration runs and trained-model registry all persist
+      in a local SQLite database (`data/polymemsim.db`, git-ignored).
+    - Calibration (Validation & Calibration tab) fits physics parameters to real data via nonlinear least
+      squares; feasibility reliability is upgraded from LOW only when a sample has an on-record
+      calibration, scaled by that calibration's fit quality (R2).
+    - ML models are trained on synthetic physics-generated data, optionally combined with real logged
+      measurements; the ML Lab's Explainability section lets you check which inputs a trained model
+      actually relies on.
+    - Illustrative defaults and presets are not experimental measurements.
+    - The simulator cannot establish drinking-water safety, regulatory compliance or commercial viability.
+    """)

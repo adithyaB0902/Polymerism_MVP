@@ -1,0 +1,4 @@
+scenario,membrane_type,polymer_name,permeability_LMH_bar,thickness_um,rejection_percent
+Generic MF,MF,Generic Polymer,25,100,90
+Generic UF,UF,Generic Polymer,25,100,95
+Generic NF,NF,Generic Polymer,25,100,98
