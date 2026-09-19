@@ -362,12 +362,35 @@ tabs = st.tabs(
 # 0. Overview
 # --------------------------------------------------------------------------
 with tabs[0]:
-    st.subheader("Purpose")
-    st.write(
-        "POLYMEMSIM is a virtual lab for screening whether a proposed polymer membrane is "
-        "promising enough to justify physical testing — combining a documented physics model, "
-        "a persistent lab notebook (samples, batches, protocol runs, logged experiments), "
-        "calibration against real data, and an ML pipeline trained on both."
+    st.markdown(
+        """
+        <div class="pms-callout">
+            <span class="pms-badge">Research-ready</span>
+            <strong>POLYMEMSIM</strong> is a virtual membrane screening platform that blends a documented
+            physics model, persistent lab notebook, calibration workflow, and machine-learning analysis
+            into a single experimental decision-support environment.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        """
+        <div class="pms-card-grid">
+            <div class="pms-card">
+                <h4>Core workflow</h4>
+                <p>Register samples, run a guided protocol, simulate membrane behavior, and log results in a coherent pipeline.</p>
+            </div>
+            <div class="pms-card">
+                <h4>Calibration & validation</h4>
+                <p>Compare modeled outputs with measured data and fit parameters to improve prediction quality.</p>
+            </div>
+            <div class="pms-card">
+                <h4>Research extension</h4>
+                <p>Evaluate CS–CA–biochar Pb(II) formulations using Box–Behnken DOE, RSM, ML comparison, and optimization logic.</p>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
     st.info(
         "This does not prove membrane performance, safety, regulatory compliance or commercial "
@@ -1015,6 +1038,25 @@ with tabs[3]:
 with tabs[4]:
     st.subheader("CS–CA–Biochar Pb(II) Research Lab")
     st.caption("Experimental values are user-supplied. Model outputs are predictions, not validation.")
+    st.markdown(
+        """
+        <div class="pms-card-grid">
+            <div class="pms-card">
+                <h4>Formulation</h4>
+                <p>Capture the membrane recipe and track the CS–CA–biochar composition for each sample.</p>
+            </div>
+            <div class="pms-card">
+                <h4>Adsorption</h4>
+                <p>Compute removal efficiency and adsorptive capacity directly from Pb(II) input and equilibrium data.</p>
+            </div>
+            <div class="pms-card">
+                <h4>Analysis</h4>
+                <p>Fit response-surface and ML models, then compare candidates before selecting a recommended optimum.</p>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     section = st.radio(
         "Research section",
         ["Membrane formulation", "Pb(II) removal", "BBD design", "Experimental data",

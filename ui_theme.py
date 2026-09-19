@@ -32,14 +32,26 @@ html, body, [class*="css"] {{
 .pms-hero {{
     display: flex;
     align-items: center;
-    gap: 0.9rem;
-    padding-bottom: 0.4rem;
-    border-bottom: 3px solid {TEAL};
-    margin-bottom: 0.6rem;
+    gap: 1rem;
+    padding: 1.15rem 1.25rem 1.0rem 1.25rem;
+    border: 1px solid rgba(14, 124, 123, 0.18);
+    border-radius: 16px;
+    background: linear-gradient(135deg, rgba(14, 124, 123, 0.10), rgba(12, 60, 77, 0.02));
+    box-shadow: 0 8px 24px rgba(19, 42, 58, 0.08);
+    margin-bottom: 0.9rem;
 }}
 .pms-hero-icon {{
-    font-size: 2.4rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 3.2rem;
+    height: 3.2rem;
+    border-radius: 14px;
+    background: linear-gradient(135deg, {TEAL}, {TEAL_DARK});
+    color: white;
+    font-size: 1.8rem;
     line-height: 1;
+    box-shadow: 0 10px 24px rgba(14, 124, 123, 0.25);
 }}
 .pms-hero-title {{
     font-family: 'IBM Plex Sans', sans-serif;
@@ -54,6 +66,52 @@ html, body, [class*="css"] {{
     font-size: 0.95rem;
     color: #4B6B72;
     margin: 0.1rem 0 0 0;
+}}
+
+.pms-card-grid {{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.9rem;
+    margin: 1rem 0 1.2rem 0;
+}}
+.pms-card {{
+    background: linear-gradient(180deg, #ffffff 0%, {SURFACE} 100%);
+    border: 1px solid {BORDER};
+    border-radius: 14px;
+    padding: 1rem 1.05rem;
+    box-shadow: 0 6px 18px rgba(19, 42, 58, 0.04);
+}}
+.pms-card h4 {{
+    margin: 0 0 0.35rem 0;
+    font-size: 0.78rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #5B7A80;
+}}
+.pms-card p {{
+    margin: 0;
+    color: {INK};
+    line-height: 1.5;
+}}
+.pms-badge {{
+    display: inline-block;
+    padding: 0.2rem 0.5rem;
+    border-radius: 999px;
+    background: rgba(14, 124, 123, 0.10);
+    color: {TEAL_DARK};
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-bottom: 0.4rem;
+}}
+.pms-callout {{
+    margin: 1rem 0 0.8rem 0;
+    padding: 0.8rem 1rem;
+    border-left: 4px solid {TEAL};
+    border-radius: 10px;
+    background: rgba(14, 124, 123, 0.05);
+    color: {INK};
 }}
 
 /* ---------- Instrument-style stat strip ---------- */
