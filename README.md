@@ -17,6 +17,10 @@ python -m venv .venv
 # source .venv/bin/activate
 pip install -r requirements.txt
 streamlit run app.py
+
+#host
+https://polymerismmvp-teuf5x9fbv3ynkwxbwdgwk.streamlit.app/
+
 ```
 
 A local SQLite database is created automatically at `data/polymemsim.db` on first run. Model and experiment artifacts remain local to the app runtime.
