@@ -66,7 +66,7 @@ from ml.explain import feature_importances, permutation_importances, used_vs_unu
 from ml.ood import OODDetector
 from research.membrane_formulation import MembraneFormulation
 from research.pb_removal import calculate_pb_metrics
-from research.experiments import read_experimental_data
+from research.experiments import read_experimental_data, validate_experiment_frame
 from research.rsm.box_behnken import generate_box_behnken_design
 from research.rsm.ui import render_rsm_analysis
 from research.ml import FEATURES as RESEARCH_FEATURES, compare_models as compare_research_models, fit_best_model
@@ -1102,6 +1102,98 @@ with tabs[4]:
         st.dataframe(design, width="stretch")
         st.download_button("Download BBD CSV", design.to_csv(index=False), "cs_ca_biochar_bbd.csv", "text/csv")
     elif section == "Experimental data":
+        st.subheader("Manual laboratory entry")
+        st.caption(
+            "Enter one measured Box–Behnken run at a time. The app calculates Pb(II) "
+            "removal and qe from your laboratory measurements; it does not create experimental values."
+        )
+        design = generate_box_behnken_design()
+        run_ids = design["run_id"].tolist()
+        run_id = st.selectbox(
+            "Box–Behnken run",
+            run_ids,
+            format_func=lambda value: (
+                f"{value} — "
+                + ", ".join(
+                    f"{label}={design.loc[design['run_id'].eq(value), factor].iloc[0]:g}"
+                    for factor, label in [
+                        ("chitosan_wt_percent", "chitosan"),
+                        ("biochar_wt_percent", "biochar"),
+                        ("pH", "pH"),
+                        ("initial_pb_mg_l", "initial Pb"),
+                    ]
+                )
+            ),
+            key="manual_bbd_run",
+        )
+        selected_run = design.loc[design["run_id"].eq(run_id)].iloc[0]
+        with st.form("manual_research_experiment_form"):
+            st.write(
+                f"Selected conditions: chitosan {selected_run['chitosan_wt_percent']:g} wt%, "
+                f"biochar {selected_run['biochar_wt_percent']:g} wt%, pH {selected_run['pH']:g}, "
+                f"initial Pb(II) {selected_run['initial_pb_mg_l']:g} mg/L."
+            )
+            experiment_id = st.text_input("Experiment ID", value=run_id, key="manual_experiment_id")
+            membrane_id = st.text_input("Membrane/sample ID (optional)")
+            cellulose = st.number_input("Cellulose acetate (wt%, optional)", min_value=0.0, value=0.0)
+            final_pb = st.number_input(
+                "Measured final/equilibrium Pb(II), Ce (mg/L)",
+                min_value=0.0,
+                value=5.0,
+                key="manual_final_pb",
+            )
+            contact_time = st.number_input("Contact time (minutes, optional)", min_value=0.0, value=0.0)
+            volume = st.number_input("Solution volume (L)", min_value=0.0001, value=0.1)
+            mass = st.number_input("Membrane mass (g)", min_value=0.0001, value=0.1)
+            replicate = st.number_input("Replicate number (optional)", min_value=0, step=1, value=0)
+            notes = st.text_area("Notes (optional)")
+            manual_submitted = st.form_submit_button("SAVE MEASURED RUN", key="manual_save_run")
+        if manual_submitted:
+            record = {
+                "experiment_id": experiment_id.strip(),
+                "membrane_id": membrane_id.strip() or None,
+                "chitosan_wt_percent": selected_run["chitosan_wt_percent"],
+                "cellulose_acetate_wt_percent": cellulose or None,
+                "biochar_wt_percent": selected_run["biochar_wt_percent"],
+                "pH": selected_run["pH"],
+                "initial_pb_mg_l": selected_run["initial_pb_mg_l"],
+                "final_pb_mg_l": final_pb,
+                "contact_time_min": contact_time or None,
+                "solution_volume_l": volume,
+                "membrane_mass_g": mass,
+                "replicate_number": replicate or None,
+                "notes": notes.strip() or None,
+            }
+            try:
+                if not record["experiment_id"]:
+                    raise ValueError("Experiment ID is required.")
+                measured, report = validate_experiment_frame(pd.DataFrame([record]))
+                if report["valid_rows"] != 1:
+                    st.error("; ".join(report["errors"]) or "The measured run could not be validated.")
+                else:
+                    repo.save_research_experiment(conn, measured.iloc[0].to_dict())
+                    st.success(
+                        f"Saved {record['experiment_id']} with removal "
+                        f"{measured.iloc[0]['removal_percent']:.3f}% and qe "
+                        f"{measured.iloc[0]['qe_mg_g']:.3f} mg/g."
+                    )
+            except (TypeError, ValueError, OSError) as exc:
+                st.error(str(exc))
+
+        st.download_button(
+            "Download blank data-entry template",
+            design.assign(
+                experiment_id=design["run_id"],
+                final_pb_mg_l=pd.NA,
+                solution_volume_l=pd.NA,
+                membrane_mass_g=pd.NA,
+            ).to_csv(index=False),
+            "cs_ca_biochar_manual_entry_template.csv",
+            "text/csv",
+            help="Print this template or give it to the laboratory team if they prefer paper entry.",
+        )
+        st.divider()
+        st.subheader("Upload completed data")
         upload = st.file_uploader("Experimental dataset (CSV or Excel)", type=["csv", "xlsx", "xls"], key="research_upload")
         if upload:
             try:

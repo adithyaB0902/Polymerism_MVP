@@ -49,6 +49,7 @@ Current verification result: `139 passed`.
   - qe = ((C0 - Ce) × V) / m
 - Four-factor Box–Behnken design generator with 29 runs and 5 center points
 - CSV/Excel experimental dataset validation without overwriting existing data
+- Browser-based manual entry for measured BBD runs, including automatic removal and qe calculation
 - Second-order RSM on coded factors with a full ANOVA (model, per-term, residual, lack of fit, pure error), R² / adjusted R² / predicted R² (PRESS), adequate precision, C.V., stationary-point analysis, response-surface plots, and residual / leverage / Cook's-distance diagnostics
 - ML comparison across regression baselines and advanced models
 - Optimization using a model-predicted surrogate objective

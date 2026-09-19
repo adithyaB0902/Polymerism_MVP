@@ -273,3 +273,37 @@ def test_rsm_page_renders_in_app(tmp_path, monkeypatch):
     open_rsm()
     assert [m.label for m in app.metric][:3] == ["R²", "Adjusted R²", "Predicted R²"]
     assert not list(app.exception)
+
+
+def test_manual_research_entry_saves_measured_values(tmp_path, monkeypatch):
+    """The browser form saves calculated results from one real-measurement row."""
+    import db.repository as repo
+    import streamlit as st
+    from streamlit.testing.v1 import AppTest
+
+    st.cache_resource.clear()
+    monkeypatch.setattr(repo, "DEFAULT_DB_PATH", tmp_path / "manual_entry.db")
+    app = AppTest.from_file(str(Path(__file__).resolve().parent.parent / "app.py"), default_timeout=180)
+    app.run()
+    assert not list(app.exception)
+
+    for radio in app.radio:
+        if "Experimental data" in radio.options:
+            radio.set_value("Experimental data")
+            break
+    app.run()
+    assert not list(app.exception)
+    assert any("Manual laboratory entry" in heading.value for heading in app.subheader)
+
+    app.text_input(key="manual_experiment_id").set_value("LAB-001")
+    app.number_input(key="manual_final_pb").set_value(6.0)
+    app.button(key="manual_save_run").click()
+    app.run()
+    assert not list(app.exception), list(app.exception)
+    assert any("Saved LAB-001" in success.value for success in app.success)
+
+    rows = repo.list_research_experiments(repo.get_connection())
+    assert len(rows) == 1
+    assert rows[0]["experiment_id"] == "LAB-001"
+    assert rows[0]["removal_percent"] == pytest.approx(80.0)
+    assert rows[0]["qe_mg_g"] == pytest.approx(24.0)
