@@ -113,4 +113,54 @@ CREATE TABLE IF NOT EXISTS trained_models (
     version INTEGER NOT NULL DEFAULT 1,
     is_active INTEGER NOT NULL DEFAULT 1  -- 0 when superseded by a newer version of the same target
 );
+
+CREATE TABLE IF NOT EXISTS research_formulations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    membrane_id TEXT NOT NULL,
+    chitosan_wt_percent REAL NOT NULL,
+    cellulose_acetate_wt_percent REAL NOT NULL,
+    biochar_wt_percent REAL NOT NULL,
+    fabrication_info TEXT,
+    biochar_properties_json TEXT,
+    notes TEXT
+);
+
+CREATE TABLE IF NOT EXISTS research_experiments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    experiment_id TEXT NOT NULL,
+    membrane_id TEXT,
+    chitosan_wt_percent REAL NOT NULL,
+    cellulose_acetate_wt_percent REAL,
+    biochar_wt_percent REAL NOT NULL,
+    pH REAL NOT NULL,
+    initial_pb_mg_l REAL NOT NULL,
+    final_pb_mg_l REAL NOT NULL,
+    contact_time_min REAL,
+    solution_volume_l REAL NOT NULL,
+    membrane_mass_g REAL NOT NULL,
+    removal_percent REAL NOT NULL,
+    qe_mg_g REAL NOT NULL,
+    replicate_number INTEGER,
+    notes TEXT
+);
+
+CREATE TABLE IF NOT EXISTS membrane_characterization (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    membrane_id TEXT NOT NULL,
+    characterization_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS membrane_reuse_cycles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    membrane_id TEXT NOT NULL,
+    cycle INTEGER NOT NULL,
+    regeneration_method TEXT,
+    removal_percent REAL,
+    qe_mg_g REAL,
+    notes TEXT
+);
 """

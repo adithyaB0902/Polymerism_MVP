@@ -64,6 +64,14 @@ from ml.evaluate import cross_validate_all_targets, compare_model_types
 from ml.uncertainty import supports_uncertainty, predict_one_with_uncertainty
 from ml.explain import feature_importances, permutation_importances, used_vs_unused_features
 from ml.ood import OODDetector
+from research.membrane_formulation import MembraneFormulation
+from research.pb_removal import calculate_pb_metrics
+from research.experiments import read_experimental_data
+from research.rsm.box_behnken import generate_box_behnken_design, FACTORS
+from research.rsm.quadratic_model import fit_quadratic
+from research.ml import FEATURES as RESEARCH_FEATURES, compare_models as compare_research_models, fit_best_model
+from research.optimization import optimize_removal
+from research.confirmation import compare_confirmation
 
 st.set_page_config(page_title="POLYMEMSIM", layout="wide", page_icon="🧪")
 inject_theme()
@@ -345,8 +353,8 @@ tabs = st.tabs(
         "🧪 Lab Workflow",
         "📈 Screening & Optimization",
         "🧠 ML Lab",
+        "🧬 CS–CA–Biochar Pb(II) Lab",
         "✅ Feasibility",
-        "📖 Reference",
     ]
 )
 
@@ -1002,9 +1010,105 @@ with tabs[3]:
             st.info("No models registered yet.")
 
 # --------------------------------------------------------------------------
-# 4. Feasibility
+# 4. CS–CA–Biochar Pb(II) research lab
 # --------------------------------------------------------------------------
 with tabs[4]:
+    st.subheader("CS–CA–Biochar Pb(II) Research Lab")
+    st.caption("Experimental values are user-supplied. Model outputs are predictions, not validation.")
+    section = st.radio(
+        "Research section",
+        ["Membrane formulation", "Pb(II) removal", "BBD design", "Experimental data",
+         "RSM analysis", "ML comparison", "Optimization", "Confirmation", "Assumptions & Limitations"],
+        horizontal=True, key="research_section", label_visibility="collapsed",
+    )
+    if section == "Membrane formulation":
+        with st.form("research_formulation_form"):
+            membrane_id = st.text_input("Membrane/sample ID")
+            chitosan = st.number_input("Chitosan (wt%)", 0.0, 100.0, 40.0)
+            cellulose = st.number_input("Cellulose acetate (wt%)", 0.0, 100.0, 57.0)
+            biochar = st.number_input("Biochar loading (wt%)", 0.0, 100.0, 3.0)
+            fabrication = st.text_area("Fabrication information")
+            notes = st.text_area("Notes")
+            submitted = st.form_submit_button("SAVE FORMULATION")
+        if submitted:
+            try:
+                formulation = MembraneFormulation(membrane_id, chitosan, cellulose, biochar,
+                                                   fabrication_info=fabrication, notes=notes)
+                repo.save_research_formulation(conn, formulation)
+                st.success("Formulation saved.")
+            except ValueError as exc:
+                st.error(str(exc))
+        rows = repo.list_research_formulations(conn)
+        if rows:
+            st.dataframe(pd.DataFrame(rows), width="stretch")
+    elif section == "Pb(II) removal":
+        c0 = st.number_input("Initial Pb concentration C0 (mg/L)", min_value=0.0001, value=30.0)
+        ce = st.number_input("Final/equilibrium Pb concentration Ce (mg/L)", min_value=0.0, value=5.0)
+        volume = st.number_input("Solution volume (L)", min_value=0.0001, value=0.1)
+        mass = st.number_input("Membrane mass (g)", min_value=0.0001, value=0.1)
+        try:
+            metrics = calculate_pb_metrics(c0, ce, volume, mass)
+            st.latex(r"R(\%) = \frac{C_0-C_e}{C_0}\times100")
+            st.latex(r"q_e = \frac{(C_0-C_e)V}{m}")
+            st.metric("Pb(II) removal (%)", f"{metrics['removal_percent']:.3f}")
+            st.metric("Adsorption capacity qe (mg/g)", f"{metrics['qe_mg_g']:.3f}")
+        except ValueError as exc:
+            st.error(str(exc))
+    elif section == "BBD design":
+        design = generate_box_behnken_design()
+        st.write("Four-factor Box–Behnken design: 29 runs, including five centre points.")
+        st.dataframe(design, width="stretch")
+        st.download_button("Download BBD CSV", design.to_csv(index=False), "cs_ca_biochar_bbd.csv", "text/csv")
+    elif section == "Experimental data":
+        upload = st.file_uploader("Experimental dataset (CSV or Excel)", type=["csv", "xlsx", "xls"], key="research_upload")
+        if upload:
+            try:
+                imported, report = read_experimental_data(upload, upload.name)
+                st.write(report)
+                st.dataframe(imported, width="stretch")
+                if report["valid_rows"] and st.button("SAVE VALID RESEARCH EXPERIMENTS"):
+                    for record in imported.loc[report["valid_indices"]].to_dict("records"):
+                        repo.save_research_experiment(conn, record)
+                    st.success(f"Saved {report['valid_rows']} validated research records.")
+            except (ImportError, ValueError, OSError) as exc:
+                st.error(str(exc))
+    elif section == "RSM analysis":
+        rows = repo.list_research_experiments(conn)
+        if len(rows) < 9:
+            st.info("Enter at least nine complete measured runs before fitting a quadratic model.")
+        else:
+            try:
+                result = fit_quadratic(pd.DataFrame(rows), "removal_percent", list(FACTORS))
+                st.write({"R²": result["r2"], "adjusted R²": result["adjusted_r2"], "RMSE": result["rmse"]})
+                st.dataframe(result["coefficients"], width="stretch")
+                st.dataframe(result["predictions"], width="stretch")
+            except ValueError as exc:
+                st.error(str(exc))
+    elif section == "ML comparison":
+        rows = repo.list_research_experiments(conn)
+        if len(rows) < 10:
+            st.info("Enter at least ten complete measured runs for repeated 5-fold comparison.")
+        elif st.button("COMPARE RESEARCH MODELS"):
+            try:
+                st.dataframe(compare_research_models(pd.DataFrame(rows)), width="stretch")
+            except ValueError as exc:
+                st.error(str(exc))
+    elif section == "Optimization":
+        st.info("Train a paper-specific model from measured research rows before optimizing.")
+    elif section == "Confirmation":
+        st.info("Enter confirmation replicates after a model-predicted optimum has been calculated.")
+    elif section == "Assumptions & Limitations":
+        st.markdown("""
+        - Research results are calculated from supplied measurements; no experimental values are fabricated.
+        - Synthetic data, ML predictions, and model-predicted optima are not experimental validation.
+        - Characterization and regeneration modules store laboratory observations; they do not perform measurements.
+        - The original physics simulator and lab notebook remain available in their existing tabs.
+        """)
+
+# --------------------------------------------------------------------------
+# 5. Feasibility
+# --------------------------------------------------------------------------
+with tabs[5]:
     st.subheader("Membrane Feasibility Assessment")
     result = run_current_model(membrane, water, op, targets)
     calibration_summary = None
@@ -1046,36 +1150,3 @@ with tabs[4]:
         st.success(
             "Prediction reliability: HIGH — this sample has a calibration on record with a strong fit."
         )
-
-# --------------------------------------------------------------------------
-# 5. Reference (Assumptions & Limitations)
-# --------------------------------------------------------------------------
-with tabs[5]:
-    st.subheader("Assumptions & Limitations")
-    st.markdown("""
-    - Screening-level model; not a replacement for laboratory testing.
-    - **Simple** physics model: flux = permeability x TMP; only permeability, TMP, rejection, fouling
-      coefficient, feed concentration, operating time, pump efficiency and electricity price drive results.
-    - **Detailed** physics model additionally uses: temperature (via a Vogel-equation viscosity
-      correction), thickness/porosity/pore size (a Hagen-Poiseuille structural flux cross-check),
-      cross-flow velocity (film-theory concentration polarization), recovery (a mass balance for
-      concentrate concentration and permeate-normalized energy), and turbidity/TDS/hydrophilicity/surface
-      charge (an explicitly-illustrative fouling-propensity heuristic — see models/fouling_index.py).
-    - Rejection is simplified: it is a required, directly-specified (intrinsic) input, not predicted from
-      membrane structure — the Detailed model corrects it for concentration polarization but does not
-      predict it from scratch.
-    - Cost currently reflects electricity only; membrane replacement, cleaning and maintenance cost
-      inputs exist in `models.economics` but are not exposed in this UI.
-    - Simulated replicate measurements (Single Simulation tab) use illustrative injected noise, not any
-      real error source — see `lab/replicates.py`.
-    - The lab notebook, samples, protocol runs, calibration runs and trained-model registry all persist
-      in a local SQLite database (`data/polymemsim.db`, git-ignored).
-    - Calibration (Validation & Calibration tab) fits physics parameters to real data via nonlinear least
-      squares; feasibility reliability is upgraded from LOW only when a sample has an on-record
-      calibration, scaled by that calibration's fit quality (R2).
-    - ML models are trained on synthetic physics-generated data, optionally combined with real logged
-      measurements; the ML Lab's Explainability section lets you check which inputs a trained model
-      actually relies on.
-    - Illustrative defaults and presets are not experimental measurements.
-    - The simulator cannot establish drinking-water safety, regulatory compliance or commercial viability.
-    """)

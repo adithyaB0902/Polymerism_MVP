@@ -181,6 +181,69 @@ def list_experiments_with_sample_fields(conn, data_source=None):
     return _rows_to_dicts(conn.execute(query, params).fetchall())
 
 
+# --------------------------------------------------------------------------
+# CS-CA-biochar research records (kept separate from legacy physics runs)
+# --------------------------------------------------------------------------
+
+def save_research_formulation(conn, formulation):
+    cur = conn.execute(
+        """INSERT INTO research_formulations
+        (created_at, membrane_id, chitosan_wt_percent, cellulose_acetate_wt_percent,
+         biochar_wt_percent, fabrication_info, biochar_properties_json, notes)
+        VALUES (?,?,?,?,?,?,?,?)""",
+        (_now(), formulation.membrane_id, formulation.chitosan_wt_percent,
+         formulation.cellulose_acetate_wt_percent, formulation.biochar_wt_percent,
+         formulation.fabrication_info, json.dumps(formulation.biochar_properties),
+         formulation.notes),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def list_research_formulations(conn):
+    return _rows_to_dicts(conn.execute("SELECT * FROM research_formulations ORDER BY id DESC").fetchall())
+
+
+def save_research_experiment(conn, record):
+    fields = [
+        "experiment_id", "membrane_id", "chitosan_wt_percent", "cellulose_acetate_wt_percent",
+        "biochar_wt_percent", "pH", "initial_pb_mg_l", "final_pb_mg_l", "contact_time_min",
+        "solution_volume_l", "membrane_mass_g", "removal_percent", "qe_mg_g", "replicate_number", "notes",
+    ]
+    values = [record.get(field) for field in fields]
+    cur = conn.execute(
+        f"INSERT INTO research_experiments (created_at,{','.join(fields)}) VALUES (?,{','.join(['?'] * len(fields))})",
+        [_now()] + values,
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def list_research_experiments(conn):
+    return _rows_to_dicts(conn.execute("SELECT * FROM research_experiments ORDER BY id DESC").fetchall())
+
+
+def save_characterization(conn, membrane_id, record):
+    cur = conn.execute(
+        "INSERT INTO membrane_characterization (created_at, membrane_id, characterization_json) VALUES (?,?,?)",
+        (_now(), membrane_id, json.dumps(record)),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def save_reuse_cycle(conn, record):
+    cur = conn.execute(
+        """INSERT INTO membrane_reuse_cycles
+        (created_at, membrane_id, cycle, regeneration_method, removal_percent, qe_mg_g, notes)
+        VALUES (?,?,?,?,?,?,?)""",
+        (_now(), record["membrane_id"], record["cycle"], record.get("regeneration_method"),
+         record.get("removal_percent"), record.get("qe_mg_g"), record.get("notes")),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
 def delete_all_experiments(conn):
     """Used only by tests to reset state between runs."""
     conn.execute("DELETE FROM experiments")
