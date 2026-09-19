@@ -20,6 +20,12 @@ def render_rsm_analysis(st, rows):
     factors = list(FACTORS)
     n_terms = 1 + 2 * len(factors) + len(factors) * (len(factors) - 1) // 2
     frame = pd.DataFrame(rows)
+    if "data_source" in frame.columns:
+        source_counts = frame["data_source"].fillna("experimental").value_counts().to_dict()
+        st.caption("Data provenance: " + ", ".join(f"{key}={value}" for key, value in source_counts.items()))
+        frame = frame[frame["data_source"].fillna("experimental").eq("experimental")]
+        if not frame.empty:
+            st.info("Only rows marked experimental are used for RSM fitting. Simulated and predicted rows are excluded.")
     complete = frame[factors + [RESPONSE]].apply(pd.to_numeric, errors="coerce").dropna() if len(frame) else frame
     if len(complete) <= n_terms:
         st.info(f"A full quadratic model in {len(factors)} factors has {n_terms} coefficients. "

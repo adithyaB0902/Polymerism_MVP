@@ -143,7 +143,8 @@ CREATE TABLE IF NOT EXISTS research_experiments (
     removal_percent REAL NOT NULL,
     qe_mg_g REAL NOT NULL,
     replicate_number INTEGER,
-    notes TEXT
+    notes TEXT,
+    data_source TEXT NOT NULL DEFAULT 'experimental'
 );
 
 CREATE TABLE IF NOT EXISTS membrane_characterization (

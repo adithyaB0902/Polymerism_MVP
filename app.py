@@ -69,6 +69,8 @@ from research.pb_removal import calculate_pb_metrics
 from research.experiments import read_experimental_data, validate_experiment_frame
 from research.rsm.box_behnken import generate_box_behnken_design
 from research.rsm.ui import render_rsm_analysis
+from research.cv_nested import nested_compare
+from research.paper_export import export_paper_results
 from research.ml import FEATURES as RESEARCH_FEATURES, compare_models as compare_research_models, fit_best_model
 from research.optimization import optimize_removal
 from research.confirmation import compare_confirmation
@@ -1060,7 +1062,8 @@ with tabs[4]:
     section = st.radio(
         "Research section",
         ["Membrane formulation", "Pb(II) removal", "BBD design", "Experimental data",
-         "RSM analysis", "ML comparison", "Optimization", "Confirmation", "Assumptions & Limitations"],
+         "RSM analysis", "ML comparison", "Optimization", "Confirmation", "Paper export",
+         "Assumptions & Limitations"],
         horizontal=True, key="research_section", label_visibility="collapsed",
     )
     if section == "Membrane formulation":
@@ -1210,17 +1213,33 @@ with tabs[4]:
         render_rsm_analysis(st, repo.list_research_experiments(conn))
     elif section == "ML comparison":
         rows = repo.list_research_experiments(conn)
-        if len(rows) < 10:
+        measured = [row for row in rows if row.get("data_source", "experimental") == "experimental"]
+        st.caption("Only rows marked experimental are eligible for paper-model comparison.")
+        if len(measured) < 10:
             st.info("Enter at least ten complete measured runs for repeated 5-fold comparison.")
         elif st.button("COMPARE RESEARCH MODELS"):
             try:
-                st.dataframe(compare_research_models(pd.DataFrame(rows)), width="stretch")
+                st.dataframe(nested_compare(pd.DataFrame(measured))[0], width="stretch")
             except ValueError as exc:
                 st.error(str(exc))
     elif section == "Optimization":
         st.info("Train a paper-specific model from measured research rows before optimizing.")
     elif section == "Confirmation":
         st.info("Enter confirmation replicates after a model-predicted optimum has been calculated.")
+    elif section == "Paper export":
+        st.caption("Export tables from a completed BBD measurement CSV. No values are invented.")
+        source = st.file_uploader(
+            "Completed BBD measurement template (CSV or Excel)",
+            type=["csv", "xlsx", "xls"],
+            key="paper_export_upload",
+        )
+        output_name = st.text_input("Output folder", value="paper_export")
+        if source and st.button("EXPORT PAPER RESULTS"):
+            try:
+                export_paper_results(source, output_name)
+                st.success(f"Paper outputs written to {output_name}.")
+            except (ImportError, ValueError, OSError) as exc:
+                st.error(str(exc))
     elif section == "Assumptions & Limitations":
         st.markdown("""
         - Research results are calculated from supplied measurements; no experimental values are fabricated.

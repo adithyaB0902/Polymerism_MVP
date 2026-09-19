@@ -14,6 +14,11 @@ REQUIRED_INPUT_COLUMNS = [
     "experiment_id", "chitosan_wt_percent", "biochar_wt_percent", "pH",
     "initial_pb_mg_l", "final_pb_mg_l", "solution_volume_l", "membrane_mass_g",
 ]
+MEASUREMENT_TEMPLATE_COLUMNS = [
+    "table_iv_run", "x1", "x2", "x3", "x4", "chitosan_wt_percent",
+    "biochar_wt_percent", "pH", "initial_pb_mg_l", "final_pb_mg_l_rep1",
+    "final_pb_mg_l_rep2", "solution_volume_l", "membrane_mass_g",
+]
 
 
 def validate_experiment_frame(frame, calculate_missing=True):
@@ -51,7 +56,30 @@ def read_experimental_data(source, filename=""):
     """Read CSV or Excel using installed pandas engines and validate it."""
     if hasattr(source, "read"):
         raw = source.read()
+        if isinstance(raw, str):
+            raw = raw.encode("utf-8")
         source = BytesIO(raw)
     is_excel = str(filename or getattr(source, "name", "")).lower().endswith((".xls", ".xlsx"))
     frame = pd.read_excel(source) if is_excel else pd.read_csv(source)
     return validate_experiment_frame(frame)
+
+
+def read_bbd_measurement_template(source, filename=""):
+    """Read the paper's BBD measurement template and average measured replicates."""
+    if hasattr(source, "read"):
+        raw = source.read()
+        if isinstance(raw, str):
+            raw = raw.encode("utf-8")
+        source = BytesIO(raw)
+    is_excel = str(filename or getattr(source, "name", "")).lower().endswith((".xls", ".xlsx"))
+    frame = pd.read_excel(source) if is_excel else pd.read_csv(source)
+    missing = [column for column in MEASUREMENT_TEMPLATE_COLUMNS if column not in frame.columns]
+    if missing:
+        raise ValueError("Measurement template is missing columns: " + ", ".join(missing))
+    result = frame.copy()
+    replicate_columns = ["final_pb_mg_l_rep1", "final_pb_mg_l_rep2"]
+    result["final_pb_mg_l"] = result[replicate_columns].apply(pd.to_numeric, errors="coerce").mean(axis=1)
+    result["experiment_id"] = result["table_iv_run"].astype(str)
+    result = result.rename(columns={"initial_pb_mg_l": "initial_pb_mg_l"})
+    result, report = validate_experiment_frame(result)
+    return result, report

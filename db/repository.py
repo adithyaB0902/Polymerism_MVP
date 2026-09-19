@@ -40,7 +40,18 @@ def get_connection(db_path=None):
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
+    _migrate_research_experiments(conn)
     return conn
+
+
+def _migrate_research_experiments(conn):
+    """Apply additive migrations needed by research analysis."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(research_experiments)")}
+    if "data_source" not in columns:
+        conn.execute(
+            "ALTER TABLE research_experiments ADD COLUMN data_source TEXT NOT NULL DEFAULT 'experimental'"
+        )
+        conn.commit()
 
 
 def _row_to_dict(row):
@@ -209,8 +220,13 @@ def save_research_experiment(conn, record):
         "experiment_id", "membrane_id", "chitosan_wt_percent", "cellulose_acetate_wt_percent",
         "biochar_wt_percent", "pH", "initial_pb_mg_l", "final_pb_mg_l", "contact_time_min",
         "solution_volume_l", "membrane_mass_g", "removal_percent", "qe_mg_g", "replicate_number", "notes",
+        "data_source",
     ]
     values = [record.get(field) for field in fields]
+    source = record.get("data_source", "experimental")
+    if source not in {"experimental", "simulated", "predicted"}:
+        raise ValueError("data_source must be experimental, simulated, or predicted.")
+    values[-1] = source
     cur = conn.execute(
         f"INSERT INTO research_experiments (created_at,{','.join(fields)}) VALUES (?,{','.join(['?'] * len(fields))})",
         [_now()] + values,
