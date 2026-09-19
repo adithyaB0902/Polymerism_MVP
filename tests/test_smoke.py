@@ -21,6 +21,8 @@ SMOKE_MODULES = [
     "lab.samples", "lab.replicates", "lab.protocol",
     "ml.train", "ml.dataset", "ml.model_registry", "ml.predict", "ml.evaluate",
     "ml.uncertainty", "ml.explain", "ml.features", "ml.ood",
+    "research.rsm.box_behnken", "research.rsm.quadratic_model", "research.rsm.anova",
+    "research.rsm.surfaces", "research.rsm.ui",
     "ui_theme",
 ]
 

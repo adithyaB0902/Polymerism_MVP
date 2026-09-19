@@ -67,8 +67,8 @@ from ml.ood import OODDetector
 from research.membrane_formulation import MembraneFormulation
 from research.pb_removal import calculate_pb_metrics
 from research.experiments import read_experimental_data
-from research.rsm.box_behnken import generate_box_behnken_design, FACTORS
-from research.rsm.quadratic_model import fit_quadratic
+from research.rsm.box_behnken import generate_box_behnken_design
+from research.rsm.ui import render_rsm_analysis
 from research.ml import FEATURES as RESEARCH_FEATURES, compare_models as compare_research_models, fit_best_model
 from research.optimization import optimize_removal
 from research.confirmation import compare_confirmation
@@ -1115,17 +1115,7 @@ with tabs[4]:
             except (ImportError, ValueError, OSError) as exc:
                 st.error(str(exc))
     elif section == "RSM analysis":
-        rows = repo.list_research_experiments(conn)
-        if len(rows) < 9:
-            st.info("Enter at least nine complete measured runs before fitting a quadratic model.")
-        else:
-            try:
-                result = fit_quadratic(pd.DataFrame(rows), "removal_percent", list(FACTORS))
-                st.write({"R²": result["r2"], "adjusted R²": result["adjusted_r2"], "RMSE": result["rmse"]})
-                st.dataframe(result["coefficients"], width="stretch")
-                st.dataframe(result["predictions"], width="stretch")
-            except ValueError as exc:
-                st.error(str(exc))
+        render_rsm_analysis(st, repo.list_research_experiments(conn))
     elif section == "ML comparison":
         rows = repo.list_research_experiments(conn)
         if len(rows) < 10:

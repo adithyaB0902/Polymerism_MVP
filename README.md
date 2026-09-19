@@ -49,7 +49,7 @@ Current verification result: `139 passed`.
   - qe = ((C0 - Ce) × V) / m
 - Four-factor Box–Behnken design generator with 29 runs and 5 center points
 - CSV/Excel experimental dataset validation without overwriting existing data
-- Second-order RSM fitting with coefficients, residuals, p-values, R², adjusted R², RMSE, and ANOVA-style summary
+- Second-order RSM on coded factors with a full ANOVA (model, per-term, residual, lack of fit, pure error), R² / adjusted R² / predicted R² (PRESS), adequate precision, C.V., stationary-point analysis, response-surface plots, and residual / leverage / Cook's-distance diagnostics
 - ML comparison across regression baselines and advanced models
 - Optimization using a model-predicted surrogate objective
 - Confirmation experiment comparison between predicted and measured performance
@@ -88,7 +88,10 @@ The new research package is intentionally modular and separate from the legacy m
 - `research/membrane_formulation.py` — CS–CA–biochar formulation records
 - `research/experiments.py` — experimental dataset validation and import
 - `research/rsm/box_behnken.py` — four-factor Box–Behnken design generation
-- `research/rsm/quadratic_model.py` — second-order RSM regression fitting
+- `research/rsm/quadratic_model.py` — second-order RSM regression on coded factors, prediction, stationary point, diagnostics
+- `research/rsm/anova.py` — ANOVA table, lack-of-fit test, and model-adequacy warnings
+- `research/rsm/surfaces.py` — predicted response-surface grids for contour / 3D plots
+- `research/rsm/ui.py` — Streamlit view for the RSM analysis section
 - `research/ml.py` — RSM/ML research model comparison
 - `research/optimization.py` — differential-evolution optimization
 - `research/adsorption.py` — Langmuir/Freundlich isotherm models

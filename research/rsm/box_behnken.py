@@ -22,14 +22,38 @@ def generate_box_behnken_design():
     rows.extend([[0, 0, 0, 0]] * 5)
     output = []
     for run, coded in enumerate(rows, 1):
-        record = {"run_id": f"BBD-{run:02d}", "coded_" + names[0]: coded[0]}
+        record = {"run_id": f"BBD-{run:02d}"}
         for name, level in zip(names, coded):
             low, center, high = FACTORS[name]
-            record[name] = (center if level == 0 else high if level == 1 else low)
             record["coded_" + name] = level
+            record[name] = center if level == 0 else high if level == 1 else low
         record["experimental_removal_percent"] = None
         output.append(record)
     return pd.DataFrame(output)
 
 
 generate_bbd = generate_box_behnken_design
+
+
+def to_coded(frame, factors=None, levels=None):
+    """Actual factor values -> coded units (-1, 0, +1 at low, centre, high).
+
+    ``levels`` maps factor -> (low, centre, high) and defaults to ``FACTORS``.
+    """
+    levels = levels or FACTORS
+    factors = list(factors) if factors is not None else list(levels)
+    coded = pd.DataFrame(index=frame.index)
+    for name in factors:
+        low, center, high = levels[name]
+        coded[name] = (frame[name].astype(float) - center) / ((high - low) / 2.0)
+    return coded
+
+
+def to_actual(coded, levels=None):
+    """Coded units -> actual factor values (inverse of ``to_coded``)."""
+    levels = levels or FACTORS
+    actual = pd.DataFrame(index=coded.index)
+    for name in coded.columns:
+        low, center, high = levels[name]
+        actual[name] = center + coded[name].astype(float) * (high - low) / 2.0
+    return actual

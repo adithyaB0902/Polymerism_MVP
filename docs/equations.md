@@ -79,3 +79,36 @@ the app's default "typical" conditions.
 `models/mass_balance.py`'s `total_permeate_flow_L_hr = flux_LMH x
 membrane_area_m2` — the only place membrane area affects an output
 (every other reported quantity is an intensive, per-m2/per-m3 value).
+
+## Response surface methodology (CS-CA-biochar / Pb(II) study)
+
+`research/rsm/` fits a full second-order model to the measured removal
+efficiency on **coded** factors (`x = (X - centre) / half-range`, so the
+low / centre / high levels are -1 / 0 / +1):
+
+`y = b0 + sum_i(bi xi) + sum_i(bii xi^2) + sum_{i<j}(bij xi xj) + e`
+
+For four factors this has 15 coefficients, so more than 15 complete runs
+are needed; the intended design is the 29-run Box-Behnken design (24 edge
+runs + 5 centre points).
+
+- **ANOVA**: model F = (SS_model / (p-1)) / MSE with SS_model = SS_total -
+  SSE. Per-term rows use partial (Type III) sums of squares,
+  `SS = t^2 x MSE`.
+- **Lack of fit**: replicated factor settings (the centre points) give the
+  pure-error sum of squares; `F = (SS_LOF / df_LOF) / (SS_PE / df_PE)`. It
+  is reported only when at least one setting is replicated.
+- **Fit statistics**: R^2, adjusted R^2, predicted R^2 = 1 - PRESS / SS_total
+  with `PRESS = sum(e_i / (1 - h_ii))^2`, adequate precision =
+  `(max(y_hat) - min(y_hat)) / sqrt(p x MSE / n)`, and C.V. = `sqrt(MSE) /
+  mean(y) x 100`.
+- **Stationary point**: `x_s = -1/2 B^-1 b`, where `b` holds the linear
+  coefficients and `B` is the symmetric matrix of quadratic (diagonal) and
+  half-interaction (off-diagonal) coefficients. The eigenvalues of `B`
+  classify it as a maximum (all negative), minimum (all positive), or
+  saddle. A stationary point outside the studied region is extrapolation.
+- **Diagnostics**: leverage `h_ii`, externally studentized residuals, and
+  Cook's distance; runs with |t| > 3 or D > 4/n are flagged.
+
+All statistics are computed from the supplied data. Model outputs are
+predictions and do not constitute experimental validation.
