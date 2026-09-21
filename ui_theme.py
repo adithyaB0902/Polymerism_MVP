@@ -28,6 +28,31 @@ html, body, [class*="css"] {{
     font-family: 'IBM Plex Sans', sans-serif;
 }}
 
+/* ---------- App shell ---------- */
+body {{
+    background: #EEF5F3;
+}}
+[data-testid="stAppViewContainer"] {{
+    background:
+        linear-gradient(135deg, rgba(255,255,255,0.9), rgba(238,245,243,0.96)),
+        repeating-linear-gradient(0deg, rgba(14,124,123,0.025) 0, rgba(14,124,123,0.025) 1px, transparent 1px, transparent 28px);
+}}
+[data-testid="stMainBlockContainer"] {{
+    max-width: 1440px;
+    padding-top: 2.2rem;
+    padding-bottom: 3rem;
+}}
+[data-testid="stSidebar"] {{
+    background: linear-gradient(180deg, #F7FBFA 0%, #EAF3F1 100%);
+    border-right: 1px solid {BORDER};
+}}
+[data-testid="stSidebarContent"] {{
+    padding: 1.25rem 1rem 2rem 1rem;
+}}
+[data-testid="stHeader"] {{
+    background: rgba(255,255,255,0.7);
+}}
+
 /* ---------- Hero header ---------- */
 .pms-hero {{
     display: flex;
@@ -36,9 +61,10 @@ html, body, [class*="css"] {{
     padding: 1.15rem 1.25rem 1.0rem 1.25rem;
     border: 1px solid rgba(14, 124, 123, 0.18);
     border-radius: 16px;
-    background: linear-gradient(135deg, rgba(14, 124, 123, 0.10), rgba(12, 60, 77, 0.02));
-    box-shadow: 0 8px 24px rgba(19, 42, 58, 0.08);
+    background: linear-gradient(135deg, #E4F2EF 0%, #F8FBFA 58%, #FFFDF8 100%);
+    box-shadow: 0 12px 30px rgba(19, 42, 58, 0.09);
     margin-bottom: 0.9rem;
+    animation: pms-reveal 420ms ease-out both;
 }}
 .pms-hero-icon {{
     display: inline-flex;
@@ -114,6 +140,11 @@ html, body, [class*="css"] {{
     color: {INK};
 }}
 
+@keyframes pms-reveal {{
+    from {{ opacity: 0; transform: translateY(6px); }}
+    to {{ opacity: 1; transform: translateY(0); }}
+}}
+
 /* ---------- Instrument-style stat strip ---------- */
 .pms-stat-strip {{
     display: flex;
@@ -160,17 +191,21 @@ html, body, [class*="css"] {{
 
 /* ---------- Tabs ---------- */
 [data-baseweb="tab-list"] {{
-    gap: 4px;
+    gap: 6px;
     border-bottom: 1px solid {BORDER};
+    padding: 0.2rem 0.25rem 0;
+    background: rgba(255,255,255,0.56);
+    border-radius: 10px 10px 0 0;
 }}
 [data-baseweb="tab"] {{
     font-weight: 600;
-    font-size: 0.95rem;
-    border-radius: 6px 6px 0 0;
-    padding: 0.5rem 1rem;
+    font-size: 0.88rem;
+    color: #557177;
+    border-radius: 8px 8px 0 0;
+    padding: 0.65rem 0.95rem;
 }}
 [data-baseweb="tab"][aria-selected="true"] {{
-    background-color: {SURFACE};
+    background-color: #E3F1EE;
     color: {TEAL_DARK};
 }}
 [data-baseweb="tab-highlight"] {{
@@ -179,14 +214,35 @@ html, body, [class*="css"] {{
 
 /* ---------- Buttons ---------- */
 .stButton > button {{
-    border-radius: 6px;
+    min-height: 2.45rem;
+    border-radius: 8px;
     font-weight: 600;
     letter-spacing: 0.02em;
     border: 1px solid {TEAL};
+    box-shadow: 0 2px 5px rgba(19,42,58,0.05);
+    transition: transform 120ms ease, box-shadow 120ms ease;
 }}
 .stButton > button[kind="primary"], .stButton > button:hover {{
     border-color: {TEAL_DARK};
     color: {TEAL_DARK};
+    box-shadow: 0 5px 12px rgba(14,124,123,0.14);
+    transform: translateY(-1px);
+}}
+[data-testid="stDownloadButton"] > button {{
+    min-height: 2.35rem;
+    border-radius: 8px;
+    background: #FFFFFF;
+    border: 1px solid {BORDER};
+    color: {TEAL_DARK};
+}}
+
+/* ---------- Form controls and data surfaces ---------- */
+div[data-baseweb="input"]:focus-within,
+div[data-baseweb="select"]:focus-within,
+div[data-testid="stNumberInput"]:focus-within,
+div[data-testid="stTextInput"]:focus-within {{
+    border-color: {TEAL} !important;
+    box-shadow: 0 0 0 2px rgba(14,124,123,0.12);
 }}
 
 /* ---------- Metrics ---------- */
@@ -199,9 +255,26 @@ html, body, [class*="css"] {{
 [data-testid="stExpander"] {{
     border: 1px solid {BORDER};
     border-radius: 8px;
+    background: rgba(255,255,255,0.62);
 }}
 [data-testid="stVerticalBlockBorderWrapper"] {{
     border-radius: 8px;
+}}
+[data-testid="stDataFrame"] {{
+    border: 1px solid {BORDER};
+    border-radius: 8px;
+    overflow: hidden;
+}}
+hr {{
+    border-color: {BORDER};
+    margin: 1.35rem 0;
+}}
+
+@media (max-width: 800px) {{
+    [data-testid="stMainBlockContainer"] {{ padding: 1rem 0.75rem 2rem 0.75rem; }}
+    .pms-hero {{ padding: 0.9rem; gap: 0.7rem; }}
+    .pms-hero-title {{ font-size: 1.55rem; }}
+    [data-baseweb="tab"] {{ font-size: 0.78rem; padding: 0.5rem 0.55rem; }}
 }}
 
 /* ---------- Feasibility verdict badge ---------- */
