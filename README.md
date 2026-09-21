@@ -56,7 +56,10 @@ Current verification result: `139 passed`.
 - Browser-based manual entry for measured BBD runs, including automatic removal and qe calculation
 - Second-order RSM on coded factors with a full ANOVA (model, per-term, residual, lack of fit, pure error), R² / adjusted R² / predicted R² (PRESS), adequate precision, C.V., stationary-point analysis, response-surface plots, and residual / leverage / Cook's-distance diagnostics
 - ML comparison across regression baselines and advanced models
-- Optimization using a model-predicted surrogate objective
+- Nested, group-aware ML benchmarking with linear, SVR, GPR, random forest, XGBoost (optional), MLP, and RSM models
+- Permutation importance, optional SHAP explanations, corrected resampled t-tests, formal split-conformal prediction intervals, and applicability-domain checks
+- Derringer-Suich multi-response desirability and differential-evolution optimization within design bounds
+- Swelling, porosity, regeneration/reuse, active-learning suggestions, high-resolution plot/table exports, and SQLite backup/restore
 - Confirmation experiment comparison between predicted and measured performance
 - Isotherm, kinetics, characterization, and regeneration storage support for research workflows
 
@@ -102,6 +105,7 @@ The new research package is intentionally modular and separate from the legacy m
 - `research/adsorption.py` — Langmuir/Freundlich isotherm models
 - `research/kinetics.py` — pseudo-first-order / pseudo-second-order fits
 - `research/confirmation.py` — prediction-vs-experiment comparison
+- `research/analysis_tools.py` and `research/science_tools.py` — reproducible reports, exports, calculators, desirability, active learning, and reuse analysis
 - `research/characterization.py` and `research/regeneration.py` — storage/organization of lab metadata
 
 ## Notes
@@ -109,3 +113,7 @@ The new research package is intentionally modular and separate from the legacy m
 - The original POLYMEMSIM functionality remains intact.
 - The new research workflow is additive and compatible with the existing Streamlit architecture.
 - Data are stored in SQLite without overwriting existing lab datasets.
+
+## Screenshots
+
+Screenshots can be added here after a local Streamlit run; no screenshot is treated as scientific evidence.

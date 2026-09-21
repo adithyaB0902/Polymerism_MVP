@@ -51,6 +51,10 @@ def export_paper_results(source, output_dir):
     pd.DataFrame([rsm_row] + cv_rows).to_csv(output / "table_vi_cv_performance.csv", index=False)
     pd.DataFrame(columns=["predicted_removal", "measured_rep1", "measured_rep2", "measured_rep3"]).to_csv(
         output / "table_vii_optimum_and_confirmation.csv", index=False)
+    with pd.ExcelWriter(output / "paper_tables.xlsx") as writer:
+        predictions.to_excel(writer, sheet_name="design_predictions", index=False)
+        fit["anova_table"].to_excel(writer, sheet_name="anova", index=False)
+        cv_table.to_excel(writer, sheet_name="model_comparison", index=False)
     (output / "summary_numbers.json").write_text(json.dumps({
         "n_measured_rows": int(report["valid_rows"]), "r2": fit["r2"],
         "adjusted_r2": fit["adjusted_r2"], "predicted_r2": fit["predicted_r2"],
@@ -66,7 +70,7 @@ def export_paper_results(source, output_dir):
         axis.scatter(predictions["removal_percent"], predictions["RSM"])
         axis.set(xlabel="Measured removal (%)", ylabel="RSM prediction (%)")
         fig.tight_layout()
-        fig.savefig(output / "fig7_parity_and_shap.png", dpi=160)
+        fig.savefig(output / "fig7_parity_and_shap.png", dpi=300)
         plt.close(fig)
     except ImportError:
         pass

@@ -2,6 +2,7 @@
 
 import numpy as np
 import pandas as pd
+from io import BytesIO
 
 from .anova import model_warnings
 from .box_behnken import FACTORS
@@ -52,6 +53,10 @@ def render_rsm_analysis(st, rows):
 
     st.markdown("**ANOVA**")
     st.dataframe(fit["anova_table"], width="stretch", hide_index=True)
+    anova_excel = BytesIO()
+    fit["anova_table"].to_excel(anova_excel, index=False)
+    st.download_button("Download ANOVA Excel", anova_excel.getvalue(), "anova_table.xlsx",
+                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     st.markdown("**Coefficients (coded units)**")
     st.dataframe(fit["coefficients"], width="stretch", hide_index=True)
 

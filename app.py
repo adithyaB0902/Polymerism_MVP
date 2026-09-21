@@ -24,6 +24,7 @@ uses, and docs/assumptions.md / docs/equations.md for the full picture.
 
 import numpy as np
 import pandas as pd
+from io import BytesIO
 import streamlit as st
 
 from ui_theme import inject_theme, hero, stat_strip, sidebar_section, verdict_badge, score_display, check_row
@@ -61,7 +62,7 @@ from ml.dataset import assemble_training_dataset
 from ml.model_registry import save_and_register_models, load_active_model, load_all_active_models
 from ml.predict import predict_candidate
 from ml.evaluate import cross_validate_all_targets, compare_model_types
-from ml.uncertainty import supports_uncertainty, predict_one_with_uncertainty
+from ml.uncertainty import supports_uncertainty, predict_one_with_uncertainty, conformal_prediction_interval
 from ml.explain import feature_importances, permutation_importances, used_vs_unused_features
 from ml.ood import OODDetector
 from research.membrane_formulation import MembraneFormulation
@@ -71,9 +72,12 @@ from research.rsm.box_behnken import generate_box_behnken_design
 from research.rsm.ui import render_rsm_analysis
 from research.cv_nested import nested_compare
 from research.paper_export import export_paper_results
-from research.ml import FEATURES as RESEARCH_FEATURES, compare_models as compare_research_models, fit_best_model
+from research.ml import FEATURES as RESEARCH_FEATURES, compare_models as compare_research_models, fit_best_model, explain_model, shap_values_if_available
 from research.optimization import optimize_removal
 from research.confirmation import compare_confirmation
+from research.science_tools import swelling_degree, porosity, multiresponse_desirability, regeneration_summary, suggest_next_experiment
+from research.adsorbent_comparison import comparison_table
+from research.analysis_tools import report_json_bytes
 
 st.set_page_config(page_title="POLYMEMSIM", layout="wide", page_icon="🧪")
 inject_theme()
@@ -1063,6 +1067,7 @@ with tabs[4]:
         "Research section",
         ["Membrane formulation", "Pb(II) removal", "BBD design", "Experimental data",
          "RSM analysis", "ML comparison", "Optimization", "Confirmation", "Paper export",
+         "Calculators & tools", "Adsorbent comparison", "Database backup",
          "Assumptions & Limitations"],
         horizontal=True, key="research_section", label_visibility="collapsed",
     )
@@ -1104,6 +1109,10 @@ with tabs[4]:
         st.write("Four-factor Box–Behnken design: 29 runs, including five centre points.")
         st.dataframe(design, width="stretch")
         st.download_button("Download BBD CSV", design.to_csv(index=False), "cs_ca_biochar_bbd.csv", "text/csv")
+        design_excel = BytesIO()
+        design.to_excel(design_excel, index=False)
+        st.download_button("Download BBD Excel", design_excel.getvalue(), "cs_ca_biochar_bbd.xlsx",
+                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     elif section == "Experimental data":
         st.subheader("Manual laboratory entry")
         st.caption(
@@ -1219,11 +1228,50 @@ with tabs[4]:
             st.info("Enter at least ten complete measured runs for repeated 5-fold comparison.")
         elif st.button("COMPARE RESEARCH MODELS"):
             try:
-                st.dataframe(nested_compare(pd.DataFrame(measured))[0], width="stretch")
+                measured_frame = pd.DataFrame(measured)
+                groups = measured_frame[RESEARCH_FEATURES].astype(str).agg("|".join, axis=1)
+                comparison, predictions = nested_compare(measured_frame, groups=groups)
+                st.dataframe(comparison, width="stretch")
+                st.download_button("Download model comparison CSV", comparison.to_csv(index=False),
+                                   "model_comparison.csv", "text/csv")
+                excel = BytesIO()
+                comparison.to_excel(excel, index=False)
+                st.download_button("Download model comparison Excel", excel.getvalue(),
+                                   "model_comparison.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                best_model, best_name = fit_best_model(measured_frame, comparison, seed=42)
+                permutation = explain_model(best_model, measured_frame, seed=42)
+                shap_result = shap_values_if_available(best_model, measured_frame)
+                st.markdown(f"**Best model: {best_name} (predicted/model-comparison output)**")
+                st.dataframe(permutation, width="stretch", hide_index=True)
+                if shap_result is not None:
+                    st.caption("SHAP values are model explanations, not experimental effects.")
+                report = {"data_source": "experimental", "seed": 42,
+                          "settings": {"protocol": "5-fold repeated 10 times, group-aware"},
+                          "results": comparison.to_dict("records")}
+                st.download_button("Download run report JSON", report_json_bytes(report),
+                                   "research_run_report.json", "application/json")
+                st.session_state["last_research_comparison"] = comparison
+                st.session_state["last_research_predictions"] = predictions
             except ValueError as exc:
                 st.error(str(exc))
     elif section == "Optimization":
-        st.info("Train a paper-specific model from measured research rows before optimizing.")
+        rows = repo.list_research_experiments(conn)
+        measured = pd.DataFrame([row for row in rows if row.get("data_source", "experimental") == "experimental"])
+        if len(measured) < 5:
+            st.info("Enter at least five complete measured research rows before optimization.")
+        else:
+            try:
+                factors = list(RESEARCH_FEATURES)
+                usable = measured[factors + ["removal_percent"]].apply(pd.to_numeric, errors="coerce").dropna()
+                if len(usable) < 5:
+                    st.info("Complete measured factor and removal values are required.")
+                elif st.button("SUGGEST NEXT EXPERIMENT"):
+                    suggestion = suggest_next_experiment(usable, factors, "removal_percent",
+                                                         [(20, 60), (1, 5), (3, 6), (10, 50)])
+                    st.warning(suggestion["data_source"])
+                    st.dataframe(pd.DataFrame([suggestion["factors"]]), hide_index=True)
+            except (ValueError, KeyError) as exc:
+                st.error(str(exc))
     elif section == "Confirmation":
         st.info("Enter confirmation replicates after a model-predicted optimum has been calculated.")
     elif section == "Paper export":
@@ -1240,6 +1288,55 @@ with tabs[4]:
                 st.success(f"Paper outputs written to {output_name}.")
             except (ImportError, ValueError, OSError) as exc:
                 st.error(str(exc))
+    elif section == "Calculators & tools":
+        st.caption("Calculator outputs are derived values; model outputs are predicted and measurements remain experimental.")
+        with st.form("research_calculators"):
+            wet_mass = st.number_input("Wet mass (g)", min_value=0.0, value=1.2)
+            dry_mass = st.number_input("Dry mass (g)", min_value=0.0001, value=1.0)
+            water_density = st.number_input("Water density (g/cm3)", min_value=0.0001, value=1.0)
+            area = st.number_input("Area (cm2)", min_value=0.0001, value=10.0)
+            thickness = st.number_input("Thickness (cm)", min_value=0.0001, value=2.0)
+            calculate = st.form_submit_button("CALCULATE")
+        if calculate:
+            try:
+                st.metric("Swelling degree (%)", f"{swelling_degree(wet_mass, dry_mass):.3f}")
+                st.metric("Porosity (%)", f"{porosity(wet_mass, dry_mass, water_density, area, thickness):.3f}")
+            except ValueError as exc:
+                st.error(str(exc))
+        st.subheader("Regeneration records")
+        reuse_rows = repo.list_reuse_cycles(conn)
+        if reuse_rows:
+            reuse = regeneration_summary(reuse_rows)
+            st.dataframe(reuse, width="stretch")
+            st.line_chart(reuse.set_index("cycle")["removal_percent"])
+            st.caption("Removal values are experimental records entered in the database.")
+    elif section == "Database backup":
+        st.caption("SQLite backup contains local lab records and does not create or validate experimental results.")
+        if repo.DEFAULT_DB_PATH.exists():
+            st.download_button("Download SQLite database", repo.DEFAULT_DB_PATH.read_bytes(),
+                               "polymemsim.db", "application/x-sqlite3")
+        uploaded_db = st.file_uploader("Upload SQLite database backup", type=["db", "sqlite", "sqlite3"])
+        if uploaded_db and st.button("RESTORE DATABASE BACKUP"):
+            try:
+                repo.restore_database(BytesIO(uploaded_db.getvalue()), repo.DEFAULT_DB_PATH)
+                st.success("Database restored. Restart the app session to reopen the connection.")
+            except (OSError, ValueError) as exc:
+                st.error(str(exc))
+    elif section == "Adsorbent comparison":
+        st.caption("Only user-entered literature values are shown; blank fields remain blank and are not inferred.")
+        if "adsorbent_rows" not in st.session_state:
+            st.session_state["adsorbent_rows"] = []
+        with st.form("adsorbent_comparison_form"):
+            name = st.text_input("Adsorbent")
+            qmax = st.number_input("qmax (mg/g)", min_value=0.0, value=0.0)
+            comparison_ph = st.number_input("pH", min_value=0.0, max_value=14.0, value=7.0)
+            reference = st.text_input("Reference")
+            add_row = st.form_submit_button("ADD ROW")
+        if add_row:
+            st.session_state["adsorbent_rows"].append({"adsorbent": name, "qmax_mg_g": qmax,
+                                                        "pH": comparison_ph, "reference": reference})
+        table = comparison_table(st.session_state["adsorbent_rows"])
+        st.dataframe(table, width="stretch", hide_index=True)
     elif section == "Assumptions & Limitations":
         st.markdown("""
         - Research results are calculated from supplied measurements; no experimental values are fabricated.

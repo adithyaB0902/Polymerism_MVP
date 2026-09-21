@@ -16,6 +16,26 @@ from .schema import SCHEMA
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "polymemsim.db"
 
 
+def backup_database(conn, destination):
+    """Create a consistent SQLite backup at ``destination``."""
+    destination = Path(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(str(destination)) as backup:
+        conn.backup(backup)
+    return destination
+
+
+def restore_database(source, destination=None):
+    """Restore a SQLite backup after validating its file header."""
+    destination = Path(destination) if destination else DEFAULT_DB_PATH
+    payload = source.getvalue() if hasattr(source, "getvalue") else Path(source).read_bytes()
+    if payload[:16] != b"SQLite format 3\x00":
+        raise ValueError("Uploaded file is not a SQLite database.")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(payload)
+    return destination
+
+
 def _now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -258,6 +278,16 @@ def save_reuse_cycle(conn, record):
     )
     conn.commit()
     return cur.lastrowid
+
+
+def list_reuse_cycles(conn, membrane_id=None):
+    query = "SELECT * FROM membrane_reuse_cycles"
+    params = []
+    if membrane_id is not None:
+        query += " WHERE membrane_id=?"
+        params.append(membrane_id)
+    query += " ORDER BY membrane_id, cycle"
+    return _rows_to_dicts(conn.execute(query, params).fetchall())
 
 
 def delete_all_experiments(conn):

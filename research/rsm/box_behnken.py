@@ -11,20 +11,22 @@ FACTORS = {
 }
 
 
-def generate_box_behnken_design():
-    names = list(FACTORS)
+def generate_box_behnken_design(factors=None, center_points=5):
+    """Generate a Box-Behnken design, optionally with an extra factor."""
+    factors = factors or FACTORS
+    names = list(factors)
     rows = []
-    for i, j in combinations(range(4), 2):
+    for i, j in combinations(range(len(names)), 2):
         for levels in product((-1, 1), repeat=2):
             coded = [0, 0, 0, 0]
             coded[i], coded[j] = levels
             rows.append(coded)
-    rows.extend([[0, 0, 0, 0]] * 5)
+    rows.extend([[0] * len(names)] * center_points)
     output = []
     for run, coded in enumerate(rows, 1):
         record = {"run_id": f"BBD-{run:02d}"}
         for name, level in zip(names, coded):
-            low, center, high = FACTORS[name]
+            low, center, high = factors[name]
             record["coded_" + name] = level
             record[name] = center if level == 0 else high if level == 1 else low
         record["experimental_removal_percent"] = None

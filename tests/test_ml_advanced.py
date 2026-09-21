@@ -8,6 +8,7 @@ from ml.train import FEATURES, TARGETS, train_models
 from ml.evaluate import cross_validate_target, cross_validate_all_targets, compare_model_types
 from ml.uncertainty import supports_uncertainty, predict_with_uncertainty, predict_one_with_uncertainty
 from ml.explain import feature_importances, permutation_importances, used_vs_unused_features
+from ml.uncertainty import conformal_prediction_interval
 
 
 @pytest.fixture(scope="module")
@@ -125,6 +126,23 @@ def test_permutation_importances_basic(dataset):
     # permeability/TMP should again dominate a model of the simple physics
     top = {r["feature"] for r in ranked[:3]}
     assert "permeability_LMH_bar" in top or "op_TMP_bar" in top
+
+
+def test_conformal_prediction_interval_is_formal_and_reproducible(dataset):
+    from sklearn.linear_model import LinearRegression
+
+    train = dataset.iloc[:20]
+    calibration = dataset.iloc[20:30]
+    test = dataset.iloc[30:35]
+    intervals = conformal_prediction_interval(
+        LinearRegression(), train[FEATURES], train["flux_LMH"],
+        calibration[FEATURES], calibration["flux_LMH"], test[FEATURES], alpha=0.05,
+    )
+    assert list(intervals.columns) == ["prediction", "lower", "upper", "interval_width", "coverage"]
+    assert len(intervals) == len(test)
+    assert (intervals["lower"] <= intervals["prediction"]).all()
+    assert (intervals["prediction"] <= intervals["upper"]).all()
+    assert intervals["coverage"].eq(0.95).all()
 
 
 def test_used_vs_unused_features_separates_correctly(dataset):

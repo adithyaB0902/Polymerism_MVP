@@ -19,6 +19,32 @@ This directly implements the previously-empty ml/uncertainty.py stub.
 """
 
 import numpy as np
+import pandas as pd
+
+
+def conformal_prediction_interval(model, X_train, y_train, X_calibration, y_calibration,
+                                  X_test, alpha=0.05):
+    """Return split-conformal prediction intervals for a fitted or cloneable model.
+
+    The calibration residual quantile gives marginal coverage under the usual
+    exchangeability assumption.  This is a formal prediction interval, unlike
+    the ensemble-spread diagnostic returned by ``predict_with_uncertainty``.
+    """
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must be between 0 and 1.")
+    if len(X_calibration) < 2:
+        raise ValueError("At least two calibration rows are required.")
+    from sklearn.base import clone
+
+    fitted = clone(model).fit(X_train, y_train)
+    calibration_prediction = np.asarray(fitted.predict(X_calibration), dtype=float)
+    residuals = np.abs(np.asarray(y_calibration, dtype=float) - calibration_prediction)
+    quantile_level = min(1.0, np.ceil((len(residuals) + 1) * (1 - alpha)) / len(residuals))
+    quantile = float(np.quantile(residuals, quantile_level, method="higher"))
+    mean = np.asarray(fitted.predict(X_test), dtype=float)
+    return pd.DataFrame({"prediction": mean, "lower": mean - quantile, "upper": mean + quantile,
+                         "interval_width": np.full(len(mean), 2 * quantile),
+                         "coverage": 1 - alpha})
 
 
 def supports_uncertainty(model):
