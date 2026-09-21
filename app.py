@@ -371,6 +371,7 @@ tabs = st.tabs(
         "🧠 ML Lab",
         "🧬 CS–CA–Biochar Pb(II) Lab",
         "✅ Feasibility",
+        "📐 RSM Studio",
     ]
 )
 
@@ -421,7 +422,8 @@ with tabs[0]:
     5. **Validation & Calibration** — upload real measurements; compare, then fit physics parameters to them.
     6. **Virtual Experiments → Optimization → Pareto → Sensitivity → Experiment Recommendation** — screen many candidates and decide what to test next.
     7. **ML Lab** — train/evaluate/predict/explain models on synthetic + real data.
-    8. **Feasibility** — a calibration-aware go/no-go screening verdict.
+    8. **RSM Studio** — generate the BBD design and fit the measured quadratic response-surface model.
+    9. **Feasibility** — a calibration-aware go/no-go screening verdict.
     """)
     counts = {
         "Samples": len(repo.list_samples(conn)),
@@ -448,6 +450,39 @@ with tabs[0]:
         "Recommended paper path: BBD design → Experimental data → RSM analysis → ML comparison "
         "→ Optimization → Confirmation → Paper export."
     )
+
+# --------------------------------------------------------------------------
+# 6. RSM Studio
+# --------------------------------------------------------------------------
+with tabs[6]:
+    st.subheader("RSM Studio")
+    st.caption(
+        "Find the response-surface workflow here: generate the four-factor Box–Behnken design, "
+        "review measured runs, and fit the quadratic model."
+    )
+    rsm_design, rsm_analysis = st.columns([1, 2])
+    with rsm_design:
+        st.markdown("**1. Box–Behnken design**")
+        design = generate_box_behnken_design()
+        st.metric("Design runs", len(design), "5 centre points")
+        st.download_button(
+            "Download RSM design CSV",
+            design.to_csv(index=False),
+            "cs_ca_biochar_bbd.csv",
+            "text/csv",
+        )
+        st.dataframe(design, height=360, hide_index=True, width="stretch")
+    with rsm_analysis:
+        st.markdown("**2. Fit and inspect the RSM model**")
+        rsm_rows = repo.list_research_experiments(conn)
+        measured_rsm_rows = [
+            row for row in rsm_rows if row.get("data_source", "experimental") == "experimental"
+        ]
+        st.caption(f"Measured rows available: {len(measured_rsm_rows)}. Simulated and predicted rows are excluded.")
+        if len(measured_rsm_rows) < 16:
+            st.info("Add at least 16 complete measured BBD runs before fitting the full quadratic model.")
+        else:
+            render_rsm_analysis(st, measured_rsm_rows)
 
 # --------------------------------------------------------------------------
 # 1. Lab Workflow (Sample Registry, Protocol Runner, Single Simulation,
