@@ -18,6 +18,10 @@ LABELS = {
 
 def render_rsm_analysis(st, rows):
     """Render the RSM analysis for saved experimental rows (a list of dicts)."""
+    st.caption(
+        "What this page does: show which recipe factors affect lead removal. "
+        "What you need first: measured BBD results. In technical terms: RSM + ANOVA."
+    )
     factors = list(FACTORS)
     n_terms = 1 + 2 * len(factors) + len(factors) * (len(factors) - 1) // 2
     frame = pd.DataFrame(rows)

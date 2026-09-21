@@ -29,9 +29,9 @@ import streamlit as st
 
 from ui_theme import (
     inject_theme, hero, stat_strip, section_label, verdict_badge, score_display, check_row,
-    top_nav, stepper, page_footer, glass_card,
+    top_nav, stepper, page_footer, glass_card, badge,
 )
-from ui_labels import APP_NAME, APP_TAGLINE, APP_SUMMARY, STAGES, PROGRESS_STEPS
+from ui_labels import APP_NAME, APP_TAGLINE, APP_SUMMARY, STAGES, PROGRESS_STEPS, LABELS
 from models.membrane import Membrane, Water, OperatingConditions, Targets
 from models.simulator import run_simulation, run_detailed_simulation
 from models.feasibility import feasibility_assessment
@@ -82,6 +82,9 @@ from research.confirmation import compare_confirmation
 from research.science_tools import swelling_degree, porosity, multiresponse_desirability, regeneration_summary, suggest_next_experiment
 from research.adsorbent_comparison import comparison_table
 from research.analysis_tools import report_json_bytes
+from research.adsorption import fit_isotherms
+from research.kinetics import fit_kinetics
+from research.characterization import validate_characterization
 
 st.set_page_config(
     page_title="POLYMEMSIM",
@@ -153,7 +156,7 @@ def experiment_setup():
     )
     section_label(s, "⚙️", "Physics model")
     detailed = s.toggle(
-        "Detailed Physics",
+        "Simple / Detailed view",
         value=False,
         key="detailed_physics",
         help="Adds temperature-corrected viscosity, a structural pore-flow flux "
@@ -526,19 +529,20 @@ with tabs[1]:
     page = st.radio(
         "Section",
         [
-            'Sample Registry',
-            'Protocol Runner',
-            'Single Simulation',
+            'Membrane Recipes',
+            'Measure with a protocol',
+            'Simulate a candidate',
             'Lab Notebook',
-            'Validation & Calibration',
+            'Enter Lab Results',
         ],
         horizontal=True,
         key="lab_workflow_page",
         label_visibility="collapsed",
     )
     st.divider()
-    if page == 'Sample Registry':
-        st.subheader("Samples & Batches")
+    if page == 'Membrane Recipes':
+        st.subheader("Membrane Recipes")
+        st.caption("What this page does: save membrane recipes. What you need first: a recipe name and its ingredient amounts.")
 
         with st.expander("Create a batch"):
             batch_name = st.text_input("Batch name", key="new_batch_name")
@@ -604,12 +608,12 @@ with tabs[1]:
             st.dataframe(pd.DataFrame(samples), width="stretch")
         else:
             st.info("No samples yet.")
-    elif page == 'Protocol Runner':
+    elif page == 'Measure with a protocol':
         st.subheader("Guided Experimental Protocol")
         st.caption("Turns docs/experimental_protocol.md into an actual step-by-step, saved workflow.")
         samples = repo.list_samples(conn)
         if not samples:
-            st.info("Create or load a sample in the Sample Registry tab first.")
+            st.info("Create or load a recipe in Membrane Recipes first.")
         else:
             labels = [f"#{r['id']} {r['polymer_name']} ({r['membrane_type']})" for r in samples]
             chosen = st.selectbox("Sample", labels, key="protocol_sample")
@@ -693,9 +697,10 @@ with tabs[1]:
                     if st.button("RECORD & CONTINUE"):
                         record_current_step(conn, run["id"], values)
                         st.rerun()
-    elif page == 'Single Simulation':
+    elif page == 'Simulate a candidate':
         st.subheader("Single Simulation")
         st.caption(f"Model: {'Detailed' if detailed else 'Simple'} (change this in Experiment setup above).")
+        badge("Simulated", "simulated")
         if st.button("RUN SIMULATION"):
             try:
                 result = run_current_model(membrane, water, op, targets)
@@ -770,8 +775,9 @@ with tabs[1]:
             st.download_button("Download CSV", df_exp.to_csv(index=False), "lab_notebook.csv", "text/csv")
         else:
             st.info("No experiments logged yet — run a simulation or complete a protocol and save it.")
-    elif page == 'Validation & Calibration':
-        st.subheader("Validation & Calibration")
+    elif page == 'Enter Lab Results':
+        st.subheader("Enter Lab Results")
+        st.caption("What this page does: compare model outputs with measurements. What you need first: a CSV or your lab notebook values.")
         uploaded = st.file_uploader(
             "Upload experimental CSV (needs flux_LMH and rejection_percent columns; "
             "optional operating_time_hr)",
@@ -878,6 +884,7 @@ with tabs[2]:
             df.to_csv("data/synthetic_experiments.csv", index=False)
             st.success(f"Generated {len(df)} synthetic physics experiments.")
         if "virtual_df" in st.session_state:
+            st.warning("Demo data - not real results")
             st.dataframe(st.session_state["virtual_df"].head(100), width="stretch")
             st.download_button(
                 "Download CSV",
@@ -952,6 +959,8 @@ with tabs[3]:
                 f"Trained on {summary['total_rows']} rows "
                 f"({summary['synthetic_rows']} synthetic + {summary['experimental_rows']} measured)."
             )
+            if summary["synthetic_rows"]:
+                st.warning("Demo data - not real results. Synthetic rows are labeled separately from measured data.")
         if "ml_metrics" in st.session_state:
             st.dataframe(pd.DataFrame(st.session_state["ml_metrics"]), width="stretch")
             if st.button("REGISTER MODELS"):
@@ -1161,13 +1170,13 @@ with tabs[4]:
     )
     section = st.radio(
         "Research section",
-        ["Membrane formulation", "Pb(II) removal", "BBD design", "Experimental data",
-         "RSM analysis", "ML comparison", "Optimization", "Confirmation", "Paper export",
-         "Calculators & tools", "Adsorbent comparison", "Database backup",
-         "Assumptions & Limitations"],
+        ["Membrane Recipes", "Lead removal calculator", "Experiment Planner", "Enter Lab Results", "Experimental data",
+         "What Affects Lead Removal?", "RSM analysis", "Compare Prediction Methods", "Find the Best Recipe", "Confirm in the Lab", "Paper Center",
+         "Extra Lab Tests", "Compare with Other Materials", "Data Safety",
+         "Help and Glossary"],
         horizontal=True, key="research_section", label_visibility="collapsed",
     )
-    if section == "Membrane formulation":
+    if section == "Membrane Recipes":
         with st.form("research_formulation_form"):
             membrane_id = st.text_input("Membrane/sample ID")
             chitosan = st.number_input("Chitosan (wt%)", 0.0, 100.0, 40.0)
@@ -1187,7 +1196,7 @@ with tabs[4]:
         rows = repo.list_research_formulations(conn)
         if rows:
             st.dataframe(pd.DataFrame(rows), width="stretch")
-    elif section == "Pb(II) removal":
+    elif section == "Lead removal calculator":
         c0 = st.number_input("Initial Pb concentration C0 (mg/L)", min_value=0.0001, value=30.0)
         ce = st.number_input("Final/equilibrium Pb concentration Ce (mg/L)", min_value=0.0, value=5.0)
         volume = st.number_input("Solution volume (L)", min_value=0.0001, value=0.1)
@@ -1200,7 +1209,7 @@ with tabs[4]:
             st.metric("Adsorption capacity qe (mg/g)", f"{metrics['qe_mg_g']:.3f}")
         except ValueError as exc:
             st.error(str(exc))
-    elif section == "BBD design":
+    elif section == "Experiment Planner":
         design = generate_box_behnken_design()
         st.write("Four-factor Box–Behnken design: 29 runs, including five centre points.")
         st.dataframe(design, width="stretch")
@@ -1209,7 +1218,7 @@ with tabs[4]:
         design.to_excel(design_excel, index=False)
         st.download_button("Download BBD Excel", design_excel.getvalue(), "cs_ca_biochar_bbd.xlsx",
                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    elif section == "Experimental data":
+    elif section in {"Enter Lab Results", "Experimental data"}:
         st.subheader("Manual laboratory entry")
         st.caption(
             "Enter one measured Box–Behnken run at a time. The app calculates Pb(II) "
@@ -1314,9 +1323,11 @@ with tabs[4]:
                     st.success(f"Saved {report['valid_rows']} validated research records.")
             except (ImportError, ValueError, OSError) as exc:
                 st.error(str(exc))
-    elif section == "RSM analysis":
+    elif section in {"What Affects Lead Removal?", "RSM analysis"}:
+        badge("Predicted from measured data", "predicted")
         render_rsm_analysis(st, repo.list_research_experiments(conn))
-    elif section == "ML comparison":
+    elif section == "Compare Prediction Methods":
+        badge("Predicted/model comparison", "predicted")
         rows = repo.list_research_experiments(conn)
         measured = [row for row in rows if row.get("data_source", "experimental") == "experimental"]
         st.caption("Only rows marked experimental are eligible for paper-model comparison.")
@@ -1350,7 +1361,7 @@ with tabs[4]:
                 st.session_state["last_research_predictions"] = predictions
             except ValueError as exc:
                 st.error(str(exc))
-    elif section == "Optimization":
+    elif section == "Find the Best Recipe":
         rows = repo.list_research_experiments(conn)
         measured = pd.DataFrame([row for row in rows if row.get("data_source", "experimental") == "experimental"])
         if len(measured) < 5:
@@ -1368,9 +1379,25 @@ with tabs[4]:
                     st.dataframe(pd.DataFrame([suggestion["factors"]]), hide_index=True)
             except (ValueError, KeyError) as exc:
                 st.error(str(exc))
-    elif section == "Confirmation":
+    elif section == "Confirm in the Lab":
         st.info("Enter confirmation replicates after a model-predicted optimum has been calculated.")
-    elif section == "Paper export":
+    elif section == "Paper Center":
+        st.caption("What this page does: collect paper tables, figures, and provenance. What you need first: measured BBD data.")
+        paper_checklist = pd.DataFrame([
+            {"paper item": item, "status": "Available after export"}
+            for item in ["Table IV - design and results", "Table V - ANOVA", "Table VI - model comparison",
+                         "Table VII - optimum and confirmation", "Table VIII - material comparison",
+                         "Fig. 6 - response surfaces", "Fig. 7 - parity and SHAP"]
+        ])
+        st.dataframe(paper_checklist, width="stretch", hide_index=True)
+        st.download_button(
+            "Download run report",
+            report_json_bytes({"data_source": "user-supplied measurement upload", "seed": 42,
+                               "settings": {"workflow": "paper export"}, "results": {}}),
+            "paper_run_report.json",
+            "application/json",
+        )
+        st.divider()
         st.caption("Export tables from a completed BBD measurement CSV. No values are invented.")
         source = st.file_uploader(
             "Completed BBD measurement template (CSV or Excel)",
@@ -1384,29 +1411,58 @@ with tabs[4]:
                 st.success(f"Paper outputs written to {output_name}.")
             except (ImportError, ValueError, OSError) as exc:
                 st.error(str(exc))
-    elif section == "Calculators & tools":
-        st.caption("Calculator outputs are derived values; model outputs are predicted and measurements remain experimental.")
-        with st.form("research_calculators"):
-            wet_mass = st.number_input("Wet mass (g)", min_value=0.0, value=1.2)
-            dry_mass = st.number_input("Dry mass (g)", min_value=0.0001, value=1.0)
-            water_density = st.number_input("Water density (g/cm3)", min_value=0.0001, value=1.0)
-            area = st.number_input("Area (cm2)", min_value=0.0001, value=10.0)
-            thickness = st.number_input("Thickness (cm)", min_value=0.0001, value=2.0)
-            calculate = st.form_submit_button("CALCULATE")
-        if calculate:
-            try:
-                st.metric("Swelling degree (%)", f"{swelling_degree(wet_mass, dry_mass):.3f}")
-                st.metric("Porosity (%)", f"{porosity(wet_mass, dry_mass, water_density, area, thickness):.3f}")
-            except ValueError as exc:
-                st.error(str(exc))
-        st.subheader("Regeneration records")
-        reuse_rows = repo.list_reuse_cycles(conn)
-        if reuse_rows:
-            reuse = regeneration_summary(reuse_rows)
-            st.dataframe(reuse, width="stretch")
-            st.line_chart(reuse.set_index("cycle")["removal_percent"])
-            st.caption("Removal values are experimental records entered in the database.")
-    elif section == "Database backup":
+    elif section == "Extra Lab Tests":
+        st.caption("What this page does: collect supporting membrane evidence. What you need first: measured masses or lab test values.")
+        extra_tabs = st.tabs(["Water uptake", "How much it absorbs", "How fast it absorbs", "Reuse test", "Material characterization"])
+        with extra_tabs[0]:
+            with st.form("research_calculators"):
+                wet_mass = st.number_input("Wet mass (g)", min_value=0.0, value=1.2, help="Mass after water exposure, in grams.")
+                dry_mass = st.number_input("Dry mass (g)", min_value=0.0001, value=1.0, help="Mass before water exposure, in grams.")
+                water_density = st.number_input("Water density (g/cm3)", min_value=0.0001, value=1.0, help="Water density used in the porosity equation.")
+                area = st.number_input("Area (cm2)", min_value=0.0001, value=10.0, help="Measured membrane area in square centimetres.")
+                thickness = st.number_input("Thickness (cm)", min_value=0.0001, value=2.0, help="Measured dry thickness in centimetres.")
+                calculate = st.form_submit_button("Calculate water uptake")
+            if calculate:
+                try:
+                    st.metric("Water uptake (%)", f"{swelling_degree(wet_mass, dry_mass):.3f}")
+                    st.metric("Open space in the membrane (%)", f"{porosity(wet_mass, dry_mass, water_density, area, thickness):.3f}")
+                except ValueError as exc:
+                    st.error(str(exc))
+        with extra_tabs[1]:
+            st.caption("In technical terms: Langmuir and Freundlich isotherm fits.")
+            concentrations = st.text_input("Lead levels (mg/L, comma separated)", "5, 10, 20")
+            qe_values = st.text_input("Absorbed amounts (mg/g, comma separated)", "2, 4, 7")
+            if st.button("Fit absorption models", key="fit_isotherms"):
+                try:
+                    fits = fit_isotherms([float(x) for x in concentrations.split(",")], [float(x) for x in qe_values.split(",")])
+                    st.dataframe(pd.DataFrame({name: [fit["r2"]] for name, fit in fits.items()}, index=["How well it fits"]), width="stretch")
+                except (ValueError, TypeError) as exc:
+                    st.error(f"Please enter at least three valid concentration and absorbed-amount pairs. ({exc})")
+        with extra_tabs[2]:
+            st.caption("In technical terms: pseudo-first-order and pseudo-second-order kinetic fits.")
+            times = st.text_input("Time (minutes, comma separated)", "0, 10, 20")
+            qt_values = st.text_input("Absorbed amount over time (mg/g, comma separated)", "0, 3, 5")
+            if st.button("Fit absorption speed models", key="fit_kinetics"):
+                try:
+                    fits = fit_kinetics([float(x) for x in times.split(",")], [float(x) for x in qt_values.split(",")])
+                    st.dataframe(pd.DataFrame({name: [fit["r2"]] for name, fit in fits.items()}, index=["How well it fits"]), width="stretch")
+                except (ValueError, TypeError) as exc:
+                    st.error(f"Please enter at least three valid time and absorbed-amount pairs. ({exc})")
+        with extra_tabs[3]:
+            reuse_rows = repo.list_reuse_cycles(conn)
+            if reuse_rows:
+                reuse = regeneration_summary(reuse_rows)
+                st.dataframe(reuse, width="stretch")
+                st.line_chart(reuse.set_index("cycle")["removal_percent"])
+                st.caption("Removal values are measured in the lab and entered in the database.")
+            else:
+                st.info("No reuse measurements yet. Add reuse-cycle records before fitting a reuse trend.")
+        with extra_tabs[4]:
+            st.caption("Record notes from FTIR, SEM, EDX, BET, contact-angle, stability, and porosity tests.")
+            characterization = {field: st.text_input(field.replace("_", " ").title(), key=f"char_{field}") for field in ["ftir", "sem", "edx", "bet", "contact_angle", "porosity", "swelling", "acid_stability"]}
+            if st.button("Review characterization notes", key="review_characterization"):
+                st.dataframe(pd.DataFrame([validate_characterization(characterization)]), width="stretch")
+    elif section == "Data Safety":
         st.caption("SQLite backup contains local lab records and does not create or validate experimental results.")
         if repo.DEFAULT_DB_PATH.exists():
             st.download_button("Download SQLite database", repo.DEFAULT_DB_PATH.read_bytes(),
@@ -1418,7 +1474,7 @@ with tabs[4]:
                 st.success("Database restored. Restart the app session to reopen the connection.")
             except (OSError, ValueError) as exc:
                 st.error(str(exc))
-    elif section == "Adsorbent comparison":
+    elif section == "Compare with Other Materials":
         st.caption("Only user-entered literature values are shown; blank fields remain blank and are not inferred.")
         if "adsorbent_rows" not in st.session_state:
             st.session_state["adsorbent_rows"] = []
@@ -1433,13 +1489,17 @@ with tabs[4]:
                                                         "pH": comparison_ph, "reference": reference})
         table = comparison_table(st.session_state["adsorbent_rows"])
         st.dataframe(table, width="stretch", hide_index=True)
-    elif section == "Assumptions & Limitations":
-        st.markdown("""
-        - Research results are calculated from supplied measurements; no experimental values are fabricated.
-        - Synthetic data, ML predictions, and model-predicted optima are not experimental validation.
-        - Characterization and regeneration modules store laboratory observations; they do not perform measurements.
-        - The original physics simulator and lab notebook remain available in their existing tabs.
-        """)
+    elif section == "Help and Glossary":
+        st.caption("What this page does: explain the workflow in plain English. What you need first: nothing.")
+        with st.expander("How to use POLYMEMSIM", expanded=True):
+            st.markdown("1. Save a membrane recipe.\n2. Plan the 29 experiments.\n3. Enter measured results.\n4. Fit and inspect the model.\n5. Compare methods and find a candidate recipe.\n6. Confirm the candidate in the lab and export the paper tables.")
+        search = st.text_input("Search the glossary", placeholder="Try: safe range, uptake, ANOVA")
+        glossary = pd.DataFrame([{"plain name": item["plain"], "technical caption": item["technical"]} for item in LABELS.values()])
+        if search.strip():
+            mask = glossary.astype(str).apply(lambda column: column.str.contains(search, case=False, na=False)).any(axis=1)
+            glossary = glossary.loc[mask]
+        st.dataframe(glossary, width="stretch", hide_index=True)
+        st.info("Research results come from supplied measurements; synthetic data and model predictions are not experimental validation.")
 
 # --------------------------------------------------------------------------
 # 5. Feasibility
