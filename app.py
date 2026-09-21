@@ -29,7 +29,7 @@ import streamlit as st
 
 from ui_theme import (
     inject_theme, hero, stat_strip, section_label, verdict_badge, score_display, check_row,
-    top_nav, stepper, page_footer, glass_card, badge,
+    top_nav, stepper, page_footer, glass_card, metric_card, badge,
 )
 from ui_labels import APP_NAME, APP_TAGLINE, APP_SUMMARY, STAGES, PROGRESS_STEPS, LABELS
 from models.membrane import Membrane, Water, OperatingConditions, Targets
@@ -390,7 +390,6 @@ tabs = st.tabs(
         "ML Lab 🧠",
         "CS–CA–Biochar Pb(II) Lab 🧬",
         "Feasibility ✅",
-        "RSM Studio 📐",
     ]
 )
 
@@ -479,47 +478,18 @@ with tabs[0]:
         "A compact readiness view for the CS–CA–biochar Pb(II) study. Only measured rows count toward the paper workflow."
     )
     paper_cols = st.columns(4)
-    paper_cols[0].metric("Measured runs", len(measured_research), "of 29 BBD runs")
-    paper_cols[1].metric("Formulations", len(repo.list_research_formulations(conn)))
-    paper_cols[2].metric("Reuse records", len(repo.list_reuse_cycles(conn)))
-    paper_cols[3].metric("Paper exports", "Ready" if len(measured_research) >= 16 else "Needs data")
+    with paper_cols[0]:
+        metric_card("Measured runs", len(measured_research), "of 29 BBD runs")
+    with paper_cols[1]:
+        metric_card("Formulations", len(repo.list_research_formulations(conn)))
+    with paper_cols[2]:
+        metric_card("Reuse records", len(repo.list_reuse_cycles(conn)))
+    with paper_cols[3]:
+        metric_card("Paper exports", "Ready" if len(measured_research) >= 16 else "Needs data")
     st.info(
         "Recommended paper path: BBD design → Experimental data → RSM analysis → ML comparison "
         "→ Optimization → Confirmation → Paper export."
     )
-
-# --------------------------------------------------------------------------
-# 6. RSM Studio
-# --------------------------------------------------------------------------
-with tabs[6]:
-    st.subheader("RSM Studio")
-    st.caption(
-        "Find the response-surface workflow here: generate the four-factor Box–Behnken design, "
-        "review measured runs, and fit the quadratic model."
-    )
-    rsm_design, rsm_analysis = st.columns([1, 2])
-    with rsm_design:
-        st.markdown("**1. Box–Behnken design**")
-        design = generate_box_behnken_design()
-        st.metric("Design runs", len(design), "5 centre points")
-        st.download_button(
-            "Download RSM design CSV",
-            design.to_csv(index=False),
-            "cs_ca_biochar_bbd.csv",
-            "text/csv",
-        )
-        st.dataframe(design, height=360, hide_index=True, width="stretch")
-    with rsm_analysis:
-        st.markdown("**2. Fit and inspect the RSM model**")
-        rsm_rows = repo.list_research_experiments(conn)
-        measured_rsm_rows = [
-            row for row in rsm_rows if row.get("data_source", "experimental") == "experimental"
-        ]
-        st.caption(f"Measured rows available: {len(measured_rsm_rows)}. Simulated and predicted rows are excluded.")
-        if len(measured_rsm_rows) < 16:
-            st.info("Add at least 16 complete measured BBD runs before fitting the full quadratic model.")
-        else:
-            render_rsm_analysis(st, measured_rsm_rows)
 
 # --------------------------------------------------------------------------
 # 1. Lab Workflow (Sample Registry, Protocol Runner, Single Simulation,
@@ -530,17 +500,21 @@ with tabs[1]:
         "Section",
         [
             'Membrane Recipes',
+            'Sample Registry',
             'Measure with a protocol',
+            'Protocol Runner',
             'Simulate a candidate',
+            'Single Simulation',
             'Lab Notebook',
             'Enter Lab Results',
+            'Validation & Calibration',
         ],
         horizontal=True,
         key="lab_workflow_page",
         label_visibility="collapsed",
     )
     st.divider()
-    if page == 'Membrane Recipes':
+    if page in {'Membrane Recipes', 'Sample Registry'}:
         st.subheader("Membrane Recipes")
         st.caption("What this page does: save membrane recipes. What you need first: a recipe name and its ingredient amounts.")
 
@@ -608,7 +582,7 @@ with tabs[1]:
             st.dataframe(pd.DataFrame(samples), width="stretch")
         else:
             st.info("No samples yet.")
-    elif page == 'Measure with a protocol':
+    elif page in {'Measure with a protocol', 'Protocol Runner'}:
         st.subheader("Guided Experimental Protocol")
         st.caption("Turns docs/experimental_protocol.md into an actual step-by-step, saved workflow.")
         samples = repo.list_samples(conn)
@@ -697,7 +671,7 @@ with tabs[1]:
                     if st.button("RECORD & CONTINUE"):
                         record_current_step(conn, run["id"], values)
                         st.rerun()
-    elif page == 'Simulate a candidate':
+    elif page in {'Simulate a candidate', 'Single Simulation'}:
         st.subheader("Single Simulation")
         st.caption(f"Model: {'Detailed' if detailed else 'Simple'} (change this in Experiment setup above).")
         badge("Simulated", "simulated")
@@ -775,7 +749,7 @@ with tabs[1]:
             st.download_button("Download CSV", df_exp.to_csv(index=False), "lab_notebook.csv", "text/csv")
         else:
             st.info("No experiments logged yet — run a simulation or complete a protocol and save it.")
-    elif page == 'Enter Lab Results':
+    elif page in {'Enter Lab Results', 'Validation & Calibration'}:
         st.subheader("Enter Lab Results")
         st.caption("What this page does: compare model outputs with measurements. What you need first: a CSV or your lab notebook values.")
         uploaded = st.file_uploader(
