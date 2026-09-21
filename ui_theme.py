@@ -174,8 +174,8 @@ body {{
     margin-top: 0.15rem;
 }}
 
-/* ---------- Sidebar section labels ---------- */
-.pms-sidebar-section {{
+/* ---------- Setup section labels ---------- */
+.pms-setup-section {{
     font-family: 'IBM Plex Sans', sans-serif;
     font-weight: 600;
     font-size: 0.82rem;
@@ -186,7 +186,7 @@ body {{
     padding-bottom: 0.25rem;
     margin: 1.1rem 0 0.5rem 0;
 }}
-.pms-sidebar-section:first-of-type {{ margin-top: 0.2rem; }}
+.pms-setup-section:first-of-type {{ margin-top: 0.2rem; }}
 
 /* ---------- Tabs ---------- */
 [data-baseweb="tab-list"] {{
@@ -319,8 +319,91 @@ hr {{
 """
 
 
-def inject_theme():
-    st.markdown(CSS, unsafe_allow_html=True)
+def inject_theme(mode="light"):
+    """Inject the shared responsive visual system."""
+    dark = mode == "dark"
+    shell = f"""
+    <style>
+    [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"], [data-testid="collapsedControl"] {{ display: none !important; }}
+    [data-testid="stHeader"], [data-testid="stFooter"], [data-testid="stMainMenu"], [data-testid="stToolbar"] {{ display: none !important; }}
+    [data-testid="stAppViewContainer"] {{
+        background: {'radial-gradient(circle at 12% 10%, rgba(67, 211, 190, .34), transparent 34%), radial-gradient(circle at 88% 12%, rgba(137, 92, 226, .28), transparent 30%), linear-gradient(135deg, #081A31 0%, #0C4051 52%, #251A4C 100%)' if dark else 'radial-gradient(circle at 10% 0%, rgba(66, 190, 174, .22), transparent 34%), radial-gradient(circle at 90% 0%, rgba(127, 93, 201, .16), transparent 28%), linear-gradient(135deg, #F5FBFA 0%, #E7F4F1 52%, #F7F1FF 100%)'};
+        min-height: 100vh;
+    }}
+    [data-testid="stMainBlockContainer"] {{ max-width: 1400px; padding: 1.25rem 1.25rem 4rem; }}
+    .pms-glass, [data-testid="stExpander"], [data-testid="stVerticalBlockBorderWrapper"] {{
+        background: {'rgba(9, 27, 51, .70)' if dark else 'rgba(255,255,255,.66)'};
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid {'rgba(255,255,255,.22)' if dark else 'rgba(255,255,255,.86)'};
+        border-radius: 20px;
+        box-shadow: 0 16px 40px rgba(5, 20, 38, .12);
+    }}
+    .pms-top-nav {{ position: sticky; top: .6rem; z-index: 20; padding: .55rem .75rem; margin-bottom: 1rem; }}
+    .pms-top-nav-title {{ font-size: 1.05rem; font-weight: 700; color: {'#F6FFFE' if dark else INK}; white-space: nowrap; }}
+    .pms-stepper {{ display: flex; gap: .45rem; overflow-x: auto; padding: .35rem 0 .8rem; }}
+    .pms-step {{ flex: 1 0 90px; min-width: 90px; text-align: center; font-size: .72rem; color: {'#C5D5E7' if dark else '#557177'}; }}
+    .pms-step::before {{ content: ''; display: block; height: 5px; border-radius: 99px; margin-bottom: .35rem; background: {'#3C5572' if dark else '#CBDCD9'}; }}
+    .pms-step.done::before, .pms-step.current::before {{ background: #35B9A6; }}
+    .pms-step.current {{ color: {'#FFFFFF' if dark else TEAL_DARK}; font-weight: 700; }}
+    .pms-hero-start {{ padding: clamp(1.4rem, 4vw, 3rem); border-radius: 24px; margin: 1rem 0 1.2rem; color: {'#F7FFFF' if dark else INK}; }}
+    .pms-hero-start h1 {{ font-size: clamp(2rem, 5vw, 4rem); line-height: 1.04; margin: 0 0 1rem; max-width: 760px; }}
+    .pms-hero-start p {{ max-width: 650px; font-size: 1.05rem; line-height: 1.65; }}
+    .pms-metric-card {{ padding: 1rem 1.1rem; border-radius: 20px; background: {'rgba(42, 79, 113, .72)' if dark else 'rgba(255,255,255,.82)'}; box-shadow: 7px 7px 18px rgba(4,20,36,.10), -5px -5px 14px rgba(255,255,255,.30); transition: transform 180ms ease; }}
+    .pms-metric-card:hover {{ transform: translateY(-3px); }}
+    .pms-badge-glass {{ display: inline-flex; gap: .35rem; align-items: center; padding: .35rem .7rem; border-radius: 999px; background: rgba(53,185,166,.16); border: 1px solid rgba(53,185,166,.35); font-size: .78rem; font-weight: 700; }}
+    .pms-page-footer {{ display: flex; justify-content: space-between; gap: .75rem; margin-top: 2rem; padding-top: 1rem; border-top: 1px solid {'rgba(255,255,255,.22)' if dark else BORDER}; }}
+    @media (max-width: 700px) {{ .pms-top-nav {{ top: 0; }} .pms-top-nav-title {{ font-size: .9rem; }} [data-testid="stMainBlockContainer"] {{ padding-left: .75rem; padding-right: .75rem; }} }}
+    @media (prefers-reduced-motion: reduce) {{ *, *::before, *::after {{ animation-duration: .01ms !important; transition-duration: .01ms !important; }} }}
+    </style>
+    """
+    st.markdown(CSS + shell, unsafe_allow_html=True)
+
+
+def glass_card(title, body, icon=""):
+    st.markdown(f'<div class="pms-glass" style="padding:1.1rem 1.25rem; margin:.65rem 0;"><div class="pms-badge-glass">{icon} {title}</div><p>{body}</p></div>', unsafe_allow_html=True)
+
+
+def metric_card(label, value, help_text=""):
+    st.markdown(f'<div class="pms-metric-card"><div class="pms-stat-label">{label}</div><div class="pms-stat-value">{value}</div><div style="font-size:.78rem; color:#6B858A;">{help_text}</div></div>', unsafe_allow_html=True)
+
+
+def badge(text, tone="info"):
+    icons = {"simulated": "◌", "predicted": "◈", "measured": "●", "reliable": "✓", "caution": "!", "not reliable": "×"}
+    st.markdown(f'<span class="pms-badge-glass">{icons.get(tone.lower(), "•")} {text}</span>', unsafe_allow_html=True)
+
+
+def stepper(steps, current=0, completed=0):
+    items = []
+    for index, label in enumerate(steps):
+        state = "done" if index < completed else "current" if index == current else "upcoming"
+        items.append(f'<div class="pms-step {state}">{label}</div>')
+    st.markdown(f'<div class="pms-stepper">{"".join(items)}</div>', unsafe_allow_html=True)
+
+
+def top_nav(stages, mode="light"):
+    left, right = st.columns([5, 1])
+    with left:
+        st.markdown('<div class="pms-top-nav pms-glass"><span class="pms-top-nav-title">◒ POLYMEMSIM</span></div>', unsafe_allow_html=True)
+    with right:
+        dark = st.toggle("Dark mode", value=mode == "dark", key="pms_dark_mode")
+    selected = st.segmented_control("Stage", stages, default=st.session_state.get("pms_stage", stages[0]), key="pms_stage", label_visibility="collapsed")
+    return selected or stages[0], dark
+
+
+def page_footer(st, stages=None, back_label="Back", next_label="Next step"):
+    stages = stages or ["Start", "Plan and Enter", "Analyze", "Optimize and Confirm", "More"]
+
+    def move_stage(offset):
+        current = st.session_state.get("pms_stage", stages[0])
+        index = stages.index(current) if current in stages else 0
+        st.session_state["pms_stage"] = stages[max(0, min(len(stages) - 1, index + offset))]
+
+    left, _, right = st.columns([1, 4, 1])
+    with left:
+        st.button(f"← {back_label}", key=f"footer_back_{back_label}", on_click=move_stage, args=(-1,))
+    with right:
+        st.button(f"{next_label} →", key=f"footer_next_{next_label}", type="primary", on_click=move_stage, args=(1,))
 
 
 def hero(icon, title, subtitle):
@@ -344,8 +427,8 @@ def stat_strip(stats):
     st.markdown(f'<div class="pms-stat-strip">{cards}</div>', unsafe_allow_html=True)
 
 
-def sidebar_section(container, icon, label):
-    container.markdown(f'<div class="pms-sidebar-section">{icon} {label}</div>', unsafe_allow_html=True)
+def section_label(container, icon, label):
+    container.markdown(f'<div class="pms-setup-section">{icon} {label}</div>', unsafe_allow_html=True)
 
 
 def verdict_badge(text, tone="neutral"):

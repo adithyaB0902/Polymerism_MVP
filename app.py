@@ -27,7 +27,11 @@ import pandas as pd
 from io import BytesIO
 import streamlit as st
 
-from ui_theme import inject_theme, hero, stat_strip, sidebar_section, verdict_badge, score_display, check_row
+from ui_theme import (
+    inject_theme, hero, stat_strip, section_label, verdict_badge, score_display, check_row,
+    top_nav, stepper, page_footer, glass_card,
+)
+from ui_labels import APP_NAME, APP_TAGLINE, APP_SUMMARY, STAGES, PROGRESS_STEPS
 from models.membrane import Membrane, Water, OperatingConditions, Targets
 from models.simulator import run_simulation, run_detailed_simulation
 from models.feasibility import feasibility_assessment
@@ -85,10 +89,22 @@ st.set_page_config(
     page_icon="🧪",
     initial_sidebar_state="collapsed",
 )
-inject_theme()
-hero("🧪", "POLYMEMSIM", "Virtual Polymer Membrane Testing Lab")
+if "pms_dark_mode" not in st.session_state:
+    st.session_state["pms_dark_mode"] = False
+inject_theme("dark" if st.session_state["pms_dark_mode"] else "light")
+selected_stage, _ = top_nav(STAGES, "dark" if st.session_state["pms_dark_mode"] else "light")
+stepper(PROGRESS_STEPS, current=STAGES.index(selected_stage) if selected_stage in STAGES[:5] else 0)
+stage_hints = {
+    "Start": "Begin with a membrane recipe and review the paper workspace.",
+    "Plan and Enter": "Create samples, plan experiments, and enter measured lab results.",
+    "Analyze": "Compare models, inspect RSM surfaces, and identify important factors.",
+    "Optimize and Confirm": "Find candidate recipes, then compare them with confirmation measurements.",
+    "More": "Open supporting tests, material comparisons, exports, safety, and glossary content.",
+}
+glass_card(selected_stage, stage_hints[selected_stage], "Current stage")
+hero("🧪", APP_NAME, "Virtual Polymer Membrane Testing Lab")
 st.caption(
-    "Screening-level research MVP with a persistent lab notebook. Synthetic/ML predictions are not experimental validation."
+    f"{APP_SUMMARY} Synthetic/ML predictions are not experimental validation."
 )
 
 
@@ -135,7 +151,7 @@ def experiment_setup():
         "Set the active candidate once here. The same setup powers simulation, feasibility, "
         "screening, sensitivity, and ML prediction workflows."
     )
-    sidebar_section(s, "⚙️", "Physics model")
+    section_label(s, "⚙️", "Physics model")
     detailed = s.toggle(
         "Detailed Physics",
         value=False,
@@ -146,7 +162,7 @@ def experiment_setup():
         "Off = the original simple model (permeability x TMP only).",
     )
 
-    sidebar_section(s, "🧪", "Membrane sample")
+    section_label(s, "🧪", "Membrane sample")
     source = s.radio("Source", ["Registered sample", "Quick manual entry (not saved)"], index=0)
 
     membrane = None
@@ -250,7 +266,7 @@ def experiment_setup():
             fouling,
         )
 
-    sidebar_section(s, "💧", "Water")
+    section_label(s, "💧", "Water")
     contaminant = s.text_input("Contaminant", "Custom contaminant")
     cf = s.number_input(
         "Feed concentration (mg/L)", min_value=0.0, value=100.0, help="Drives permeate concentration."
@@ -290,7 +306,7 @@ def experiment_setup():
     )
     density = s.number_input("Density (kg/m³)", min_value=1.0, value=1000.0, help=_NOT_USED_SIMPLE)
 
-    sidebar_section(s, "🎛️", "Operating")
+    section_label(s, "🎛️", "Operating")
     tmp = s.number_input("TMP (bar)", min_value=0.0, value=2.0, help="Drives flux and energy.")
     flow = s.number_input(
         "Feed flow (L/min)",
@@ -333,7 +349,7 @@ def experiment_setup():
         "Electricity price", min_value=0.0, value=8.0, help="Drives cost per m3 (electricity term only)."
     )
 
-    sidebar_section(s, "🎯", "Targets")
+    section_label(s, "🎯", "Targets")
     min_rej = s.number_input("Minimum rejection (%)", 0.0, 100.0, 95.0)
     min_flux = s.number_input("Minimum flux (LMH)", 0.0, 100000.0, 30.0)
     max_foul = s.number_input("Maximum flux decline (%)", 0.0, 100.0, 20.0)
@@ -365,13 +381,13 @@ def ensure_sample_id(m):
 
 tabs = st.tabs(
     [
-        "🏠 Overview",
-        "🧪 Lab Workflow",
-        "📈 Screening & Optimization",
-        "🧠 ML Lab",
-        "🧬 CS–CA–Biochar Pb(II) Lab",
-        "✅ Feasibility",
-        "📐 RSM Studio",
+        "Overview 🏠",
+        "Lab Workflow 🧪",
+        "Screening & Optimization 📈",
+        "ML Lab 🧠",
+        "CS–CA–Biochar Pb(II) Lab 🧬",
+        "Feasibility ✅",
+        "RSM Studio 📐",
     ]
 )
 
@@ -379,6 +395,24 @@ tabs = st.tabs(
 # 0. Overview
 # --------------------------------------------------------------------------
 with tabs[0]:
+    st.markdown(
+        f"""
+        <div class="pms-hero-start pms-glass">
+            <div class="pms-badge-glass">Start here · research workspace</div>
+            <h1>{APP_TAGLINE}</h1>
+            <p>{APP_SUMMARY}<br>Keep simulated, predicted, and measured results visibly separate as you build the paper.</p>
+            <svg viewBox="0 0 360 90" role="img" aria-label="Water drop and membrane illustration" style="width:min(100%, 360px); margin-top:.6rem;">
+                <path d="M42 8C28 28 14 42 14 58a28 28 0 0 0 56 0C70 42 56 28 42 8Z" fill="#35B9A6" opacity=".9"/>
+                <path d="M106 30h220M106 46h220M106 62h220" stroke="#35B9A6" stroke-width="3" stroke-linecap="round" opacity=".8"/>
+                <path d="M110 22l10 10-10 10m36-20l10 10-10 10m36-20l10 10-10 10m36-20l10 10-10 10m36-20l10 10-10 10" fill="none" stroke="#A78BFA" stroke-width="3" stroke-linecap="round"/>
+            </svg>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if st.button("Start my first experiment plan", type="primary", key="start_first_plan"):
+        st.session_state["pms_stage"] = "Plan and Enter"
+        st.rerun()
     st.markdown(
         """
         <div class="pms-callout">
@@ -1452,3 +1486,5 @@ with tabs[5]:
         st.success(
             "Prediction reliability: HIGH — this sample has a calibration on record with a strong fit."
         )
+
+page_footer(st, STAGES)
