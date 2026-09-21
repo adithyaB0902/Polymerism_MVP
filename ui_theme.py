@@ -357,7 +357,13 @@ def inject_theme(mode="light"):
     @media (prefers-reduced-motion: reduce) {{ *, *::before, *::after {{ animation-duration: .01ms !important; transition-duration: .01ms !important; }} }}
     </style>
     """
-    st.markdown(CSS + shell, unsafe_allow_html=True)
+    style_markup = CSS + shell
+    # Streamlit's HTML element keeps style tags out of the Markdown renderer;
+    # the fallback preserves compatibility with older Streamlit releases.
+    if hasattr(st, "html"):
+        st.html(style_markup)
+    else:
+        st.markdown(style_markup, unsafe_allow_html=True)
 
 
 def glass_card(title, body, icon=""):
