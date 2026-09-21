@@ -43,11 +43,10 @@ body {{
     padding-bottom: 3rem;
 }}
 [data-testid="stSidebar"] {{
-    background: linear-gradient(180deg, #F7FBFA 0%, #EAF3F1 100%);
-    border-right: 1px solid {BORDER};
+    display: none;
 }}
-[data-testid="stSidebarContent"] {{
-    padding: 1.25rem 1rem 2rem 1rem;
+[data-testid="stAppViewContainer"] > .main {{
+    margin-left: 0;
 }}
 [data-testid="stHeader"] {{
     background: rgba(255,255,255,0.7);

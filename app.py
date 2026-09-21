@@ -79,7 +79,12 @@ from research.science_tools import swelling_degree, porosity, multiresponse_desi
 from research.adsorbent_comparison import comparison_table
 from research.analysis_tools import report_json_bytes
 
-st.set_page_config(page_title="POLYMEMSIM", layout="wide", page_icon="🧪")
+st.set_page_config(
+    page_title="POLYMEMSIM",
+    layout="wide",
+    page_icon="🧪",
+    initial_sidebar_state="collapsed",
+)
 inject_theme()
 hero("🧪", "POLYMEMSIM", "Virtual Polymer Membrane Testing Lab")
 st.caption(
@@ -95,7 +100,7 @@ def get_db_connection():
 conn = get_db_connection()
 
 # Resolve any pending cross-widget navigation requests queued by a button
-# elsewhere in the app (e.g. "jump the sidebar sample selector to the
+# elsewhere in the app (e.g. "jump the experiment setup sample selector to the
 # sample I just created"). This MUST happen before any widget with a
 # matching key is instantiated below -- Streamlit forbids writing to a
 # widget's own session_state key after that widget has already rendered
@@ -119,12 +124,17 @@ def _help(field, detailed_text):
 
 
 # --------------------------------------------------------------------------
-# Sidebar: physics model choice, membrane source, water/operating conditions
+# Full-page experiment setup: physics model choice, membrane source,
+# water/operating conditions, and screening targets.
 # --------------------------------------------------------------------------
 
 
-def sidebar_inputs():
-    s = st.sidebar
+def experiment_setup():
+    s = st.expander("⚙️ Experiment setup", expanded=True)
+    st.caption(
+        "Set the active candidate once here. The same setup powers simulation, feasibility, "
+        "screening, sensitivity, and ML prediction workflows."
+    )
     sidebar_section(s, "⚙️", "Physics model")
     detailed = s.toggle(
         "Detailed Physics",
@@ -336,7 +346,7 @@ def sidebar_inputs():
     return membrane, water, op, targets, detailed, active_sample_id
 
 
-membrane, water, op, targets, detailed, active_sample_id = sidebar_inputs()
+membrane, water, op, targets, detailed, active_sample_id = experiment_setup()
 
 
 def run_current_model(m, w, o, t):
@@ -421,6 +431,23 @@ with tabs[0]:
         "Registered ML models": len(repo.list_models(conn)),
     }
     stat_strip(counts)
+    research_rows = repo.list_research_experiments(conn)
+    measured_research = [
+        row for row in research_rows if row.get("data_source", "experimental") == "experimental"
+    ]
+    st.markdown("**Paper workspace**")
+    st.caption(
+        "A compact readiness view for the CS–CA–biochar Pb(II) study. Only measured rows count toward the paper workflow."
+    )
+    paper_cols = st.columns(4)
+    paper_cols[0].metric("Measured runs", len(measured_research), "of 29 BBD runs")
+    paper_cols[1].metric("Formulations", len(repo.list_research_formulations(conn)))
+    paper_cols[2].metric("Reuse records", len(repo.list_reuse_cycles(conn)))
+    paper_cols[3].metric("Paper exports", "Ready" if len(measured_research) >= 16 else "Needs data")
+    st.info(
+        "Recommended paper path: BBD design → Experimental data → RSM analysis → ML comparison "
+        "→ Optimization → Confirmation → Paper export."
+    )
 
 # --------------------------------------------------------------------------
 # 1. Lab Workflow (Sample Registry, Protocol Runner, Single Simulation,
@@ -599,7 +626,7 @@ with tabs[1]:
                         st.rerun()
     elif page == 'Single Simulation':
         st.subheader("Single Simulation")
-        st.caption(f"Model: {'Detailed' if detailed else 'Simple'} (toggle in the sidebar).")
+        st.caption(f"Model: {'Detailed' if detailed else 'Simple'} (change this in Experiment setup above).")
         if st.button("RUN SIMULATION"):
             try:
                 result = run_current_model(membrane, water, op, targets)
@@ -693,7 +720,7 @@ with tabs[1]:
                     comp_flux = compare_predictions(
                         [predicted["flux_LMH"]] * report["valid_rows"], df_up["flux_LMH"].dropna().tolist()
                     )
-                    st.write("Flux comparison (current sidebar prediction vs each measured row):", comp_flux)
+                    st.write("Flux comparison (current experiment-setup prediction vs each measured row):", comp_flux)
                 except Exception as e:
                     st.error(str(e))
 
@@ -772,7 +799,7 @@ with tabs[2]:
     if page == 'Virtual Experiments':
         st.subheader("Virtual Experiments")
         st.caption(
-            "Uses the Simple physics model regardless of the sidebar toggle, for consistency with "
+            "Uses the Simple physics model regardless of the setup toggle, for consistency with "
             "the Optimization/Pareto/Sensitivity/ML tabs below."
         )
         n = st.slider("Number of virtual experiments", 100, 10000, 500, step=100)
@@ -889,7 +916,7 @@ with tabs[3]:
         else:
             st.info("Train models first (section 1).")
 
-    with st.expander("4. Predict the current sidebar candidate"):
+    with st.expander("4. Predict the current experiment candidate"):
         active_models = load_all_active_models(conn)
         if not active_models:
             st.info("No models registered yet — train and register them in section 1.")
